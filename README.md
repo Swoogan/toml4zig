@@ -1,5 +1,5 @@
 # tomlc99
-TOML in zig; v0.5.0 compliant.
+TOML in c99; v0.5.0 compliant.
 
 
 # Usage
@@ -70,7 +70,7 @@ convert it to a string or integer depending on context.
 
 # Building
 
-A normal *make* suffices. Alternately, you can also simply include the
+A normal `zig build` suffices. Alternately, you can also simply include the
 `toml.c` and `toml.h` files in your project.
 
 # Testing
@@ -78,7 +78,7 @@ A normal *make* suffices. Alternately, you can also simply include the
 To test against the standard test set provided by BurntSushi/toml-test:
 
 ```
-   % make
+   % zig build
    % cd test1
    % bash build.sh   # do this once
    % bash run.sh     # this will run the test suite
@@ -88,7 +88,7 @@ To test against the standard test set provided by BurntSushi/toml-test:
 To test against the standard test set provided by iarna/toml:
 
 ```
-   % make
+   % zig build
    % cd test2
    % bash build.sh   # do this once
    % bash run.sh     # this will run the test suite
