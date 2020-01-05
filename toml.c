@@ -1933,25 +1933,6 @@ int toml_rtots(const char* src_, toml_timestamp_t* ret)
 }
 
 
-/* Raw to boolean */
-int toml_rtob(const char* src, int* ret_)
-{
-    if (!src) return -1;
-    int dummy;
-    int* ret = ret_ ? ret_ : &dummy;
-    
-    if (0 == strcmp(src, "true")) {
-        *ret = 1;
-        return 0;
-    }
-    if (0 == strcmp(src, "false")) {
-        *ret = 0;
-        return 0;
-    }
-    return -1;
-}
-
-
 /* Raw to integer */
 int toml_rtoi(const char* src, int64_t* ret_)
 {
