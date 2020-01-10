@@ -3,6 +3,80 @@ const std = @import("std");
 const debug = std.debug;
 const mem = std.mem;
 
+/// TOML has 3 data structures: value, array, table.
+///  Each of them can have identification key.
+pub const KeyValue = struct {
+    key: []const u8,
+    value: []const u8,
+};
+
+pub const Array = struct {
+    key: []const u8, // key to this array
+    kind: u8, // element kind: 'v'alue, 'a'rray, or 't'able
+    type: u8, // for value kind: 'i'nt, 'd'ouble, 'b'ool, 's'tring, 't'ime, 'D'ate, 'T'imestamp
+
+    len: u32, // number of elements
+    u: TomlType,
+};
+
+pub const Table = struct {
+    key: []const u8, // key to this table
+    implicit: bool, // table was created implicitly
+
+    // key-values in the table
+    pairs: []KeyValue,
+
+    // arrays in the table
+    arrays: []Array,
+
+    // tables in the table
+    tables: []Table,
+};
+
+pub const TomlType = union {
+    pair: *KeyValue,
+    array: *Array,
+    table: *Table,
+};
+
+const TokenType = enum {
+    INVALID,
+    DOT,
+    COMMA,
+    EQUAL,
+    LBRACE,
+    RBRACE,
+    NEWLINE,
+    LBRACKET,
+    RBRACKET,
+    STRING,
+};
+
+const Token = struct {
+    kind: TokenType,
+    lineNumber: u32,
+    pointer: *u8, // points into context->start
+    len: u32,
+    eof: u32,
+};
+
+const Context = struct {
+    start: []const u8,
+    stop: []const u8,
+    errorBuffer: []const u8,
+    jmp: jmp_buf,
+
+    token: Token,
+    root: *Table,
+    currentTable: *Table,
+
+    path = struct {
+        top: i32,
+        key: [10]u8,
+        token: [10]Token,
+    },
+};
+
 /// Raw to boolean
 pub fn rawToBool(src: []const u8) !bool {
     if (src.len == 0)
@@ -196,8 +270,7 @@ fn rawToDecimalExec(src: []const u8, buf: []u8) i32 {
     if (src[src.len - 1] == '_')
         return error.InvalidInput;
 
-    if (buf[buf.len - 1] == '.')
-    // if (p != buf && p[-1] == '.')
+    if (j == buf.len or p[j - 1] == '.')
         return error.InvalidInput;
 
     // Run strtod on buf to get the value
@@ -207,4 +280,46 @@ fn rawToDecimalExec(src: []const u8, buf: []u8) i32 {
 pub fn rawToDecimal(src: []const u8) !f64 {
     var buf: [100]u8 = undefined;
     return rawToDecimalExec(src, buf[0..99]);
+}
+
+test "Decimal" {
+    var num = try rawToInt("33_45_456_24");
+    std.testing.expect(num == 334545624);
+}
+
+/// Look up key in table. Returns `NotFound` if not present,
+/// or the element
+fn check_key(table: *Table, key: []const u8) !TomlType {
+    for (table.pairs) |pair| {
+        if (std.mem.eql(u8, key, pair.key)) {
+            return &pair;
+        }
+    }
+
+    for (table.arrays) |array| {
+        if (std.mem.eql(u8, key, array.key)) {
+            return &array;
+        }
+    }
+
+    for (table.tables) |tab| {
+        if (std.mem.eql(u8, key, tab.key)) {
+            return &tab;
+        }
+    }
+
+    return error.NotFound;
+}
+
+test "check_key" {
+    var pairs = [_]KeyValue{.{ .key = "a", .value = "v" }};
+    var t = Table{
+        .key = "key",
+        .implicit = false,
+        .pairs = pairs[0..pairs.len],
+        .arrays = undefined,
+        .tables = undefined,
+    };
+    var result = try check_key(&t, "a");
+    std.testing.expect(result.value == "v");
 }
