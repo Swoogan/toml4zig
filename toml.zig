@@ -132,67 +132,76 @@ test "integer" {
     };
 }
 
-
 fn rawToDecimalExec(src: []const u8, buf: []u8) i32 {
-    if (src.len == 0) 
-     return error.NoInput;
-    
-    char* p = buf;
-    char* q = p + buflen;
-    const char* s = src;
-    double dummy;
-    double* ret = ret_ ? ret_ : &dummy;
-	
+    if (src.len == 0)
+        return error.NoInput;
 
-    // allow +/- */
-	if (s[0] == '+' || s[0] == '-')
-		*p++ = *s++;
+    var i: u8 = 0;
+    var j: u8 = 0;
 
-	// disallow +_1.00 */
-	if (s[0] == '_')
-		return -1;
-
-	// disallow +.99 */
-	if (s[0] == '.')
-		return -1;
-		
-	// zero must be followed by . or 'e', or NUL */
-	if (s[0] == '0' && s[1] && !strchr("eE.", s[1]))
-		return -1;
-
-    // just strip underscores and pass to strtod */
-    while (*s && p < q) {
-        int ch = *s++;
-		switch (ch) {
-		case '.':
-			if (s[-2] == '_') return -1;
-			if (s[0] == '_') return -1;
-			break;
-		case '_':
-			// disallow '__'
-			if (s[0] == '_') return -1; 
-			continue;			// skip _ */
-		default:
-			break;
-		}
-        *p++ = ch;
+    // allow +/-
+    if (src[i] == '+' or src[i] == '-') {
+        buf[j] = src[i];
+        j += 1;
+        i += 1;
     }
-    if (*s || p == q) return -1; // reached end of string or buffer is full? */
-	
-	// last char cannot be '_' */
-	if (s[-1] == '_') return -1;
 
-    if (p != buf && p[-1] == '.') 
-        return -1; // no trailing zero */
+    // disallow +_1.00
+    if (src[i] == '_')
+        return error.InvalidInput;
 
-    // cap with NUL */
-    *p = 0;
+    // disallow +.99
+    if (src[i] == '.')
+        return error.InvalidInput;
 
-    // Run strtod on buf to get the value */
-    char* endp;
-    errno = 0;
-    *ret = strtod(buf, &endp);
-    return (errno || *endp) ? -1 : 0;
+    // zero must be followed by . or 'e', or NUL
+    if (src[i] == '0' and src[i + 1] and !strchr("eE.", src[i + 1]))
+        return error.InvalidInput;
+
+    // just strip underscores and pass to strtod
+    while (i < src.len and j < buf.len) {
+        var ch = src[i];
+        i += 1;
+
+        switch (ch) {
+            '.' => {
+                // if (src[-2] == '_') return -1;
+                if (src[i] == '_')
+                    return error.InvalidInput;
+
+                // break;
+            },
+            '_' => {
+                // disallow '__'
+                if (src[i] == '_')
+                    return error.InvalidInput;
+
+                // skip _
+                continue;
+            },
+            else => {
+                break;
+            },
+        }
+
+        buf[j] = ch;
+        j += 1;
+    }
+
+    // reached end of string or buffer is full?
+    if (i == src.len or j == buf.len)
+        return error.InvalidInput;
+
+    // last char cannot be '_'
+    if (src[src.len - 1] == '_')
+        return error.InvalidInput;
+
+    if (buf[buf.len - 1] == '.')
+    // if (p != buf && p[-1] == '.')
+        return error.InvalidInput;
+
+    // Run strtod on buf to get the value
+    return std.fmt.parseFloat(f64, buf);
 }
 
 pub fn rawToDecimal(src: []const u8) !f64 {
