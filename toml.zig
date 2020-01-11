@@ -33,7 +33,7 @@ pub const Table = struct {
     tables: []Table,
 };
 
-pub const TomlType = union {
+pub const TomlType = union(enum) {
     pair: *KeyValue,
     array: *Array,
     table: *Table,
@@ -290,21 +290,21 @@ test "Decimal" {
 /// Look up key in table. Returns `NotFound` if not present,
 /// or the element
 fn check_key(table: *Table, key: []const u8) !TomlType {
-    for (table.pairs) |pair| {
+    for (table.pairs) |pair, i| {
         if (std.mem.eql(u8, key, pair.key)) {
-            return &pair;
+            return TomlType{ .pair = &table.pairs[i] };
         }
     }
 
-    for (table.arrays) |array| {
+    for (table.arrays) |array, i| {
         if (std.mem.eql(u8, key, array.key)) {
-            return &array;
+            return TomlType{ .array = &table.arrays[i] };
         }
     }
 
-    for (table.tables) |tab| {
+    for (table.tables) |tab, i| {
         if (std.mem.eql(u8, key, tab.key)) {
-            return &tab;
+            return TomlType{ .table = &table.tables[i] };
         }
     }
 
@@ -321,5 +321,115 @@ test "check_key" {
         .tables = undefined,
     };
     var result = try check_key(&t, "a");
-    std.testing.expect(result.value == "v");
+    switch (result) {
+        TomlType.pair => |pair| std.testing.expect(std.mem.eql(u8, pair.value, "v")),
+        else => unreachable,
+    }
+}
+
+fn rawToString(src: []const u8) ![]const u8 {
+    var multiline = false;
+
+    var start: u8 = 0;
+    var end: u8 = 0;
+
+    if (src.len == 0)
+        return error.InvalidInput;
+
+    if (src[0] != '\'' and src[0] != '"')
+        return error.InvalidInput;
+
+    if (src[0] == '\'') {
+
+        // TODO: bounds check here
+        if (std.mem.eql(u8, src[0..3], "'''")) {
+            multiline = true;
+            start = 3;
+            end = src.len - 3 - 1;
+
+            if (start >= end)
+                return error.InvalidInput;
+
+            // last 3 chars in src must be '''
+            if (std.mem.eql(u8, src[end .. src.len - 1], "'''"))
+                return error.InvalidInput;
+
+            // skip first new line right after '''
+            if (src[start] == '\n') {
+                start += 1;
+            } else if (src[start] == '\r' and src[start + 1] == '\n') {
+                start += 2;
+            }
+
+            return norm_lit_str(sp, sq - sp, multiline, 0, 0);
+        } else {
+            start = 1;
+            end = src.len - 1;
+
+            // last char in src must be '
+            if (!(start <= end and src[end] == '\''))
+                return invalid.Input;
+
+            return src[start..end];
+        }
+    }
+
+    if (std.mem.eql(u8, src[0..3], "\"\"\"")) {
+        multiline = true;
+        start = 3;
+        end = src.len - 3 - 1;
+
+        if (start >= end)
+            return error.InvalidInput;
+
+        if (std.mem.eql(u8, src[start..end], "\"\"\""))
+            return error.InvalidInput;
+
+        // skip first new line right after """
+        if (src[start] == '\n') {
+            start += 1;
+        } else if (src[start] == '\r' and src[start + 1] == '\n') {
+            start += 2;
+        }
+
+        return = norm_basic_str(sp, sq - sp, multiline, 0, 0);
+    } else {
+        start = 1;
+        end = src.len - 1;
+
+        if (start >= end)
+            return invalidInput;
+
+        if (end != '"')
+            return invalidInput;
+
+        return src[start..end];
+    }
+}
+
+fn tableKey(table: *Table) !*u8 {
+    if (table == undefined)
+        return error.TableNotDefined;
+
+    return table.key;
+}
+
+fn arrayAt(array: *Array, index: u32) !*Array {
+    if (array.kind != 'a')
+        return error.InvalidInput;
+
+    if (!(0 <= index and index < array.len))
+        return error.IndexNotInRange;
+
+    return array.array[index];
+}
+
+fn tableAt(array: *Array, index: u32) !*Table {
+    if (array.kind != 't')
+        return error.InvalidInput;
+
+    if (!(0 <= idx and idx < array.len))
+        return error.IndexNotInRange;
+
+    return array.Table[idx];
 }
