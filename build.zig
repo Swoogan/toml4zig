@@ -10,7 +10,7 @@ pub fn build(b: *Builder) void {
         "-fpic",
     };
 
-    const lib = b.addStaticLibrary("toml4zig", "toml.zig");
+    const lib = b.addStaticLibrary("toml4zig", "src/toml.zig");
     lib.setBuildMode(mode);
     // lib.setTarget(.wasm32, .freestanding, .musl);
 

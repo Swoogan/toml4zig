@@ -407,6 +407,14 @@ fn rawToString(src: []const u8) ![]const u8 {
     }
 }
 
+fn tableNArr(table: *Table) i32 {
+    return table.narr;
+}
+
+fn tableNTab(table: *Table) i32 {
+    return tab.ntab;
+}
+
 fn tableKey(table: *Table) !*u8 {
     if (table == undefined)
         return error.TableNotDefined;
