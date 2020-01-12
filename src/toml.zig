@@ -407,6 +407,88 @@ fn rawToString(src: []const u8) ![]const u8 {
     }
 }
 
+const Date = struct {
+    year: i32,
+    month: i32,
+    day: i32,
+};
+
+fn scan_date(p: []const u8) !Date {
+    var year = scan_digits(p, 4);
+    var month = if (year >= 0 and p[4] == '-') scan_digits(p + 5, 2) else -1;
+    var day = if (month >= 0 and p[7] == '-') scan_digits(p + 8, 2) else -1;
+
+    var date = Date{
+        .year = year,
+        .month = month,
+        .day = day,
+    };
+
+    return if (day >= 0) date else error.NoDay;
+}
+
+const Time = struct {
+    hour: i32,
+    minute: i32,
+    second: i32,
+};
+
+fn scanTime(p: []const u8) !Time {
+    var hour = scanDigits(p, 2);
+    var minute = if (hour >= 0 and p[2] == ':') scan_digits(p + 3, 2) else return error.NoHour;
+    var second = if (minute >= 0 and p[5] == ':') scan_digits(p + 6, 2) else return error.NoMinute;
+
+    var time = Time{
+        .hour = hour,
+        .minute = minute,
+        .second = second,
+    };
+
+    return if (second >= 0) time else return error.NoSecond;
+}
+
+// fn nextToken(context: *Context, dotIsSpecial: bool) TokenType {
+//     var lineNum = context.token.lineNum;
+//     var p = context.token.pointer;
+//
+//     // eat this token
+//     var i: u32 = 0;
+//     for (context.token) |token| {
+//         if (*p++ == '\n')
+//             lineNum += 1;
+//     }
+//
+//     // make next token
+//     while (p < context.stop) {
+//         // skip comment. stop just before the \n.
+//         if (*p == '#') {
+//             for (p++; p < context.stop && *p != '\n'; p++);
+//             continue;
+//         }
+//
+//         if (dotIsSpecial and *p == '.')
+//             return ret_token(ctx, DOT, lineno, p, 1);
+//
+//         switch (*p) {
+//         case ',': return ret_token(ctx, COMMA, lineno, p, 1);
+//         case '=': return ret_token(ctx, EQUAL, lineno, p, 1);
+//         case '{': return ret_token(ctx, LBRACE, lineno, p, 1);
+//         case '}': return ret_token(ctx, RBRACE, lineno, p, 1);
+//         case '[': return ret_token(ctx, LBRACKET, lineno, p, 1);
+//         case ']': return ret_token(ctx, RBRACKET, lineno, p, 1);
+//         case '\n': return ret_token(ctx, NEWLINE, lineno, p, 1);
+//         case '\r': case ' ': case '\t':
+//             // ignore white spaces
+//             p++;
+//             continue;
+//         }
+//
+//         return scan_string(ctx, p, lineno, dotisspecial);
+//     }
+//
+//     return ret_eof(ctx, lineno);
+// }
+
 fn keyIn(table: *Table, keyIndex: u32) ![]const u8 {
     if (keyidx < table.nkval)
         return table.kval[keyidx].key;
