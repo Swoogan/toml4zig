@@ -407,6 +407,37 @@ fn rawToString(src: []const u8) ![]const u8 {
     }
 }
 
+fn keyIn(table: *Table, keyIndex: u32) ![]const u8 {
+    if (keyidx < table.nkval)
+        return table.kval[keyidx].key;
+
+    keyidx -= table.nkval;
+    if (keyidx < table.narr)
+        return table.arr[keyidx].key;
+
+    keyidx -= table.narr;
+    if (keyidx < table.ntable)
+        return table.table[keyidx].key;
+
+    return error.NotFound;
+}
+
+fn rawIn(table: *Table, key: []const u8) ![]const u8 {
+    var i: u32;
+    return while (i < table.nkval) : (i += 1) {
+        if (0 == strcmp(key, table.kval[i].key))
+            break table.table[i];
+    } else error.NotFound;
+}
+
+fn arrayIn(table: *Table, key: u8) !*Array {
+    var i: u32;
+    return while (i < table.narr) : (i += 1) {
+        if (0 == strcmp(key, table.array[i].key))
+            break table.table[i];
+    } else error.NotFound;
+}
+
 fn tableIn(table: *Table, key: u8) !*Table {
     var i: u32;
     return while (i < table.ntab) : (i += 1) {
