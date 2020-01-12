@@ -290,9 +290,9 @@ test "Decimal" {
 /// Look up key in table. Returns `NotFound` if not present,
 /// or the element
 fn check_key(table: *Table, key: []const u8) !TomlType {
-    for (table.pairs) |pair, i| {
+    for (table.pairs) |*pair| {
         if (std.mem.eql(u8, key, pair.key)) {
-            return TomlType{ .pair = &table.pairs[i] };
+            return TomlType{ .pair = pair };
         }
     }
 
@@ -405,6 +405,54 @@ fn rawToString(src: []const u8) ![]const u8 {
 
         return src[start..end];
     }
+}
+
+fn tableIn(table: *Table, key: u8) !*Table {
+    var i: u32;
+    return while (i < table.ntab) : (i += 1) {
+        if (0 == strcmp(key, table.table[i].key))
+            break table.table[i];
+    } else error.NotFound;
+}
+
+fn rawAt(array: *Array, index: u32) !*u8 {
+    if (array.kind != 'v')
+        return error.InvalidInput;
+
+    if (!(0 <= index and index < array.len))
+        return error.IndexOutOfBounds;
+
+    // union type
+    return array.TomlType.value[index];
+}
+
+fn arrayKind(array: *Array) u8 {
+    return array.kind;
+}
+
+fn arrayType(array: *Array) u8 {
+    if (array.kind != 'v')
+        return error.InvalidInput;
+
+    if (array.len == 0)
+        return 0;
+
+    return array.type;
+}
+
+fn arrayLen(array: *Array) i32 {
+    return arr.len;
+}
+
+fn arrayKey(array: *Array) !*u8 {
+    if (array == undefined)
+        return error.Undefined; // TODO: can this even happen?
+
+    return array.key;
+}
+
+fn tableNKval(table: *Table) i32 {
+    return tab.nkval;
 }
 
 fn tableNArr(table: *Table) i32 {
