@@ -1,785 +1,24 @@
-// MIT License
-//
-// Copyright (c) 2017 - 2019 CK Tan
-//
-// Permission is hereby granted, free of charge, to any person obtaining a copy
-// of this software and associated documentation files (the "Software"), to deal
-// in the Software without restriction, including without limitation the rights
-// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-// copies of the Software, and to permit persons to whom the Software is
-// furnished to do so, subject to the following conditions:
+static void* (*ppmalloc)(size_t) = malloc;
+static void (*ppfree)(void*) = free;
+static void* (*ppcalloc)(size_t, size_t) = calloc;
+static void* (*pprealloc)(void*, size_t) = realloc;
 
-// The above copyright notice and this permission notice shall be included in all
-// copies or substantial portions of the Software.
-
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-// SOFTWARE.
-
-const std = @import("std");
-const os = @import("os");
-
-const debug = std.debug;
-const mem = std.mem;
-
-// File I/O interface
-pub const ReadError = os.ReadError;
-
-pub fn read(self: File, buffer: []u8) ReadError!usize {
-    return os.read(self.handle, buffer);
-}
-
-pub const WriteError = os.WriteError;
-
-pub fn write(self: File, bytes: []const u8) WriteError!void {
-    return os.write(self.handle, bytes);
-}
-
-/// TOML has 3 data structures: value, array, table.
-///  Each of them can have identification key.
-pub const KeyValue = struct {
-    key: []const u8,
-    value: []const u8,
-};
-
-pub const Array = struct {
-    key: []const u8, // key to this array
-    kind: u8, // element kind: 'v'alue, 'a'rray, or 't'able
-    type: u8, // for value kind: 'i'nt, 'd'ouble, 'b'ool, 's'tring, 't'ime, 'D'ate, 'T'imestamp
-
-    len: u32, // number of elements
-    u: TomlType,
-};
-
-pub const Table = struct {
-    key: []const u8, // key to this table
-    implicit: bool, // table was created implicitly
-
-    // key-values in the table
-    pairs: []KeyValue,
-
-    // arrays in the table
-    arrays: []Array,
-
-    // tables in the table
-    tables: []Table,
-};
-
-pub const TomlType = union(enum) {
-    pair: *KeyValue,
-    array: *Array,
-    table: *Table,
-};
-
-const TokenType = enum {
-    INVALID,
-    DOT,
-    COMMA,
-    EQUAL,
-    LBRACE,
-    RBRACE,
-    NEWLINE,
-    LBRACKET,
-    RBRACKET,
-    STRING,
-};
-
-const Token = struct {
-    kind: TokenType,
-    lineNumber: u32,
-    pointer: *u8, // points into context->start
-    len: u32,
-    eof: u32,
-};
-
-const Context = struct {
-    start: []const u8,
-    stop: []const u8,
-    errorBuffer: []const u8,
-    jmp: jmp_buf,
-
-    token: Token,
-    root: *Table,
-    currentTable: *Table,
-
-    path = struct {
-        top: i32,
-        key: [10]u8,
-        token: [10]Token,
-    },
-};
-
-const tabPath = struct {
-    cnt: i32,
-    key: [10]Token,
-};
-
-/// Create a keyval in the table.
-fn createKeyValueInTable(context: *Context, table: *Table, keyToken: Token) !KeyValue {
-    // first, normalize the key to be used for lookup.
-    // remember to free it if we error out.
-    var newkey = normalizeKey(context, keyToken);
-
-    // if key exists: error out
-    if (keyKind(table, newkey)) {
-        xfree(newkey);
-        // e_key_exists_error(context, keyToken.lineNum, newkey);
-        return error.KeyExists;
-    }
-
-    // make a new entry
-    var n = table.nkval;
-    var base: **KeyValue;
-
-    if (0 == (base = (*keyval*) REALLOC(tab->kval, (n+1) * sizeof(*base)))) {
-        xfree(newkey);
-        // e_outofmemory(ctx, FLINE);
-        return error.OutOfMemory;
-    }
-    tab.kval = base;
-
-    if (0 == (base[n] = (*keyval) CALLOC(1, sizeof(*base[n])))) {
-        xfree(newkey);
-        // e_outofmemory(ctx, FLINE);
-        return error.OutOfMemory;
-    }
-
-    // save the key in the new value struct
-    var dest: *KeyValue = tab.kval[tab.nkval++];
-    tab.nkval += 1;
-    dest.key = newkey;
-    return dest;
+void toml_set_memutil(void* (*xxmalloc)(size_t),
+        void  (*xxfree)(void*),
+        void* (*xxcalloc)(size_t, size_t),
+        void* (*xxrealloc)(void*, size_t))
+{
+    ppmalloc = xxmalloc;
+    ppfree = xxfree;
+    ppcalloc = xxcalloc;
+    pprealloc = xxrealloc;
 }
 
 
-/// Create a table in the table.
-fn createKeyTableInTable(context: *Context, table: *Table, keyToken: Token) !*Table {
-    // first, normalize the key to be used for lookup. 
-    // remember to free it if we error out. 
-     var newkey = normalizeKey(context, keyToken);
-
-     // if key exists: error out
-     var dest: *Table = undefined;
-     if (checkKey(tab, newkey, 0, 0, &dest)) {
-        xfree(newkey);           // don't need this anymore 
-      
-        // special case: if table exists, but was created implicitly ...
-        if (dest != undefined and dest.implicit) {
-            // we make it explicit now, and simply return it
-            dest.implicit = false;
-            return dest;
-        }
-        return error.KeyExists;
-        // e_key_exists_error(context, keyToken.lineNum, newkey);
-    }
-
-    // create a new table entry 
-    var n = table.ntab;
-    var base = **Table;
-    if (0 == (base = (**Table) REALLOC(tab->tab, (n+1) * sizeof(*base)))) {
-        xfree(newkey);
-        // e_outofmemory(ctx, FLINE);
-        return error.OutOfMemory;
-    }
-    table.tab = base;
-        
-    if (0 == (base[n] = (*Table) CALLOC(1, sizeof(*base[n])))) {
-        xfree(newkey);
-        // e_outofmemory(ctx, FLINE);
-        return error.OutOfMemory;
-    }
-    dest = table.table[table.ntab++];
-    
-    // save the key in the new table struct
-    dest.key = newkey;
-    return dest;
-}
-
-/// Create an array in the table.
-fn createKeyArrayInTable(context *Context, table: *Table, keytok Token, kind: u8) !*Array {
-    // first, normalize the key to be used for lookup. 
-    // remember to free it if we error out. 
-    char* newkey = normalize_key(context, keytok);
-    
-    // if key exists: error out 
-    if (key_kind(tab, newkey)) {
-        xfree(newkey);           // don't need this anymore 
-        e_key_exists_error(context, keytok.lineno, newkey);
-        return 0;               // not reached 
-    }
-
-    // make a new array entry
-    int n = tab->narr;
-    **Array base;
-    if (0 == (base = (**Array) realloc(tab->arr, (n+1) * sizeof(*base)))) {
-        xfree(newkey);
-        e_outofmemory(context, fline);
-        return 0;               // not reached
-    }
-    tab->arr = base;
-        
-    if (0 == (base[n] = (*Array) CALLOC(1, sizeof(*base[n])))) {
-        xfree(newkey);
-        e_outofmemory(context, FLINE);
-        return 0;               // not reached 
-    }
-    *Array dest = tab->arr[tab->narr++];
-
-    // save the key in the new array struct
-    dest->key = newkey;
-	dest->kind = kind;
-    return dest;
-}
-
-/// Raw to boolean
-pub fn rawToBool(src: []const u8) !bool {
-    if (src.len == 0)
-        return error.NoInput;
-
-    if (mem.eql(u8, src, "true"))
-        return true;
-
-    if (mem.eql(u8, src, "false"))
-        return false;
-
-    return error.ConvertFailed;
-}
-
-test "boolean" {
-    const f = try rawToBool("false");
-    std.testing.expect(f == false);
-
-    const t = try rawToBool("true");
-    std.testing.expect(t == true);
-}
-
-/// Raw to integer
-pub fn rawToInt(src: []const u8) !i64 {
-    if (src.len == 0)
-        return error.NoInput;
-
-    var buf: [100]u8 = undefined;
-    var j: u8 = 0;
-    var i: u8 = 0;
-
-    // allow +/-
-    if (src[i] == '+' or src[i] == '-') {
-        buf[j] = src[i];
-        j += 1;
-        i += 1;
-    }
-
-    // disallow +_100
-    if (src[i] == '_')
-        return error.InvalidInput;
-
-    var base: u8 = 10;
-
-    // if 0 ...
-    if (src[i] == '0') {
-        switch (src[i + 1]) {
-            'x' => {
-                base = 16;
-                i += 2;
-            },
-            'o' => {
-                base = 8;
-                i += 2;
-            },
-            'b' => {
-                base = 2;
-                i += 2;
-            },
-            0 => {
-                const zero: i64 = 0;
-                return zero;
-            },
-            else => {
-                // ensure no other digits after it
-                if (src[i + 1] != '0') return error.InvalidInput;
-            },
-        }
-    }
-
-    // just strip underscores and pass to parseInt
-    while (i < src.len and j < buf.len) {
-        const ch = src[i];
-        i += 1;
-
-        switch (ch) {
-            '_' => {
-                if (i == src.len)
-                    break;
-
-                // disallow '__'
-                if (src[i] == '_')
-                    return error.InvalidInput;
-
-                continue; // skip _
-            },
-            else => {
-                buf[j] = ch;
-                j += 1;
-            },
-        }
-    }
-
-    if (i < src.len or j == buf.len) return error.InvalidInput;
-
-    // last char cannot be '_'
-    if (src[src.len - 1] == '_') return error.InvalidInput;
-
-    return std.fmt.parseInt(i64, buf[0..j], base);
-}
-
-test "integer" {
-    var num = try rawToInt("33_45_456_24");
-    std.testing.expect(num == 334545624);
-
-    num = try rawToInt("+10");
-    std.testing.expect(num == 10);
-
-    num = try rawToInt("-10");
-    std.testing.expect(num == -10);
-
-    num = try rawToInt("0b11");
-    std.testing.expect(num == 3);
-
-    num = try rawToInt("0o10");
-    std.testing.expect(num == 8);
-
-    num = try rawToInt("0xA");
-    std.testing.expect(num == 10);
-
-    _ = rawToInt("__45") catch |err| {
-        std.testing.expect(err == error.InvalidInput);
-    };
-
-    _ = rawToInt("_45_") catch |err| {
-        std.testing.expect(err == error.InvalidInput);
-    };
-}
-
-fn rawToDecimalExec(src: []const u8, buf: []u8) i32 {
-    if (src.len == 0)
-        return error.NoInput;
-
-    var i: u8 = 0;
-    var j: u8 = 0;
-
-    // allow +/-
-    if (src[i] == '+' or src[i] == '-') {
-        buf[j] = src[i];
-        j += 1;
-        i += 1;
-    }
-
-    // disallow +_1.00
-    if (src[i] == '_')
-        return error.InvalidInput;
-
-    // disallow +.99
-    if (src[i] == '.')
-        return error.InvalidInput;
-
-    // zero must be followed by . or 'e', or NUL
-    if (src[i] == '0' and src[i + 1] and !strchr("eE.", src[i + 1]))
-        return error.InvalidInput;
-
-    // just strip underscores and pass to strtod
-    while (i < src.len and j < buf.len) {
-        var ch = src[i];
-        i += 1;
-
-        switch (ch) {
-            '.' => {
-                // if (src[-2] == '_') return -1;
-                if (src[i] == '_')
-                    return error.InvalidInput;
-
-                // break;
-            },
-            '_' => {
-                // disallow '__'
-                if (src[i] == '_')
-                    return error.InvalidInput;
-
-                // skip _
-                continue;
-            },
-            else => {
-                break;
-            },
-        }
-
-        buf[j] = ch;
-        j += 1;
-    }
-
-    // reached end of string or buffer is full?
-    if (i == src.len or j == buf.len)
-        return error.InvalidInput;
-
-    // last char cannot be '_'
-    if (src[src.len - 1] == '_')
-        return error.InvalidInput;
-
-    if (j == buf.len or p[j - 1] == '.')
-        return error.InvalidInput;
-
-    // Run strtod on buf to get the value
-    return std.fmt.parseFloat(f64, buf);
-}
-
-pub fn rawToDecimal(src: []const u8) !f64 {
-    var buf: [100]u8 = undefined;
-    return rawToDecimalExec(src, buf[0..99]);
-}
-
-test "Decimal" {
-    var num = try rawToInt("33_45_456_24");
-    std.testing.expect(num == 334545624);
-}
-
-/// Look up key in table. Returns `NotFound` if not present,
-/// or the element
-fn check_key(table: *Table, key: []const u8) !TomlType {
-    for (table.pairs) |*pair| {
-        if (std.mem.eql(u8, key, pair.key)) {
-            return TomlType{ .pair = pair };
-        }
-    }
-
-    for (table.arrays) |array, i| {
-        if (std.mem.eql(u8, key, array.key)) {
-            return TomlType{ .array = &table.arrays[i] };
-        }
-    }
-
-    for (table.tables) |tab, i| {
-        if (std.mem.eql(u8, key, tab.key)) {
-            return TomlType{ .table = &table.tables[i] };
-        }
-    }
-
-    return error.NotFound;
-}
-
-test "check_key" {
-    var pairs = [_]KeyValue{.{ .key = "a", .value = "v" }};
-    var t = Table{
-        .key = "key",
-        .implicit = false,
-        .pairs = pairs[0..pairs.len],
-        .arrays = undefined,
-        .tables = undefined,
-    };
-    var result = try check_key(&t, "a");
-    switch (result) {
-        TomlType.pair => |pair| std.testing.expect(std.mem.eql(u8, pair.value, "v")),
-        else => unreachable,
-    }
-}
-
-fn rawToString(src: []const u8) ![]const u8 {
-    var multiline = false;
-
-    var start: u8 = 0;
-    var end: u8 = 0;
-
-    if (src.len == 0)
-        return error.InvalidInput;
-
-    if (src[0] != '\'' and src[0] != '"')
-        return error.InvalidInput;
-
-    if (src[0] == '\'') {
-
-        // TODO: bounds check here
-        if (std.mem.eql(u8, src[0..3], "'''")) {
-            multiline = true;
-            start = 3;
-            end = src.len - 3 - 1;
-
-            if (start >= end)
-                return error.InvalidInput;
-
-            // last 3 chars in src must be '''
-            if (std.mem.eql(u8, src[end .. src.len - 1], "'''"))
-                return error.InvalidInput;
-
-            // skip first new line right after '''
-            if (src[start] == '\n') {
-                start += 1;
-            } else if (src[start] == '\r' and src[start + 1] == '\n') {
-                start += 2;
-            }
-
-            return norm_lit_str(sp, sq - sp, multiline, 0, 0);
-        } else {
-            start = 1;
-            end = src.len - 1;
-
-            // last char in src must be '
-            if (!(start <= end and src[end] == '\''))
-                return invalid.Input;
-
-            return src[start..end];
-        }
-    }
-
-    if (std.mem.eql(u8, src[0..3], "\"\"\"")) {
-        multiline = true;
-        start = 3;
-        end = src.len - 3 - 1;
-
-        if (start >= end)
-            return error.InvalidInput;
-
-        if (std.mem.eql(u8, src[start..end], "\"\"\""))
-            return error.InvalidInput;
-
-        // skip first new line right after """
-        if (src[start] == '\n') {
-            start += 1;
-        } else if (src[start] == '\r' and src[start + 1] == '\n') {
-            start += 2;
-        }
-
-        return = norm_basic_str(sp, sq - sp, multiline, 0, 0);
-    } else {
-        start = 1;
-        end = src.len - 1;
-
-        if (start >= end)
-            return invalidInput;
-
-        if (end != '"')
-            return invalidInput;
-
-        return src[start..end];
-    }
-}
-
-fn ret_eof(context: Context, lineNum: u32) TokenType {
-    ret_token(context, NEWLINE, lineno, context.stop, 0);
-    context.token.eof = 1;
-    return context.token.token;
-}
-
-/// Scan p for n digits compositing entirely of [0-9]
-fn scanDigits(src: []const u8, count: i32) i32 {
-    var result = 0;
-    var j = 0;
-
-    while (count > 0 and isDigit(src[j])) {
-        result = 10 * ret + atoi(src[j]);
-        count -= 1;
-        j += 1;
-    }
-
-    return if (n != 0) error.NonDigit else result;
-}
-
-const Date = struct {
-    year: i32,
-    month: i32,
-    day: i32,
-};
-
-fn scanDate(p: []const u8) !Date {
-    var year = scan_digits(p, 4);
-    var month = if (year >= 0 and p[4] == '-') scan_digits(p + 5, 2) else -1;
-    var day = if (month >= 0 and p[7] == '-') scan_digits(p + 8, 2) else -1;
-
-    var date = Date{
-        .year = year,
-        .month = month,
-        .day = day,
-    };
-
-    return if (day >= 0) date else error.NoDay;
-}
-
-const Time = struct {
-    hour: i32,
-    minute: i32,
-    second: i32,
-};
-
-fn scanTime(p: []const u8) !Time {
-    var hour = scanDigits(p, 2);
-    var minute = if (hour >= 0 and p[2] == ':') scan_digits(p + 3, 2) else return error.NoHour;
-    var second = if (minute >= 0 and p[5] == ':') scan_digits(p + 6, 2) else return error.NoMinute;
-
-    var time = Time{
-        .hour = hour,
-        .minute = minute,
-        .second = second,
-    };
-
-    return if (second >= 0) time else return error.NoSecond;
-}
-
-// fn nextToken(context: *Context, dotIsSpecial: bool) TokenType {
-//     var lineNum = context.token.lineNum;
-//     var p = context.token.pointer;
-//
-//     // eat this token
-//     var i: u32 = 0;
-//     for (context.token) |token| {
-//         if (*p++ == '\n')
-//             lineNum += 1;
-//     }
-//
-//     // make next token
-//     while (p < context.stop) {
-//         // skip comment. stop just before the \n.
-//         if (*p == '#') {
-//             for (p++; p < context.stop && *p != '\n'; p++);
-//             continue;
-//         }
-//
-//         if (dotIsSpecial and *p == '.')
-//             return ret_token(ctx, DOT, lineno, p, 1);
-//
-//         switch (*p) {
-//         case ',': return ret_token(ctx, COMMA, lineno, p, 1);
-//         case '=': return ret_token(ctx, EQUAL, lineno, p, 1);
-//         case '{': return ret_token(ctx, LBRACE, lineno, p, 1);
-//         case '}': return ret_token(ctx, RBRACE, lineno, p, 1);
-//         case '[': return ret_token(ctx, LBRACKET, lineno, p, 1);
-//         case ']': return ret_token(ctx, RBRACKET, lineno, p, 1);
-//         case '\n': return ret_token(ctx, NEWLINE, lineno, p, 1);
-//         case '\r': case ' ': case '\t':
-//             // ignore white spaces
-//             p++;
-//             continue;
-//         }
-//
-//         return scan_string(ctx, p, lineno, dotisspecial);
-//     }
-//
-//     return ret_eof(ctx, lineno);
-// }
-
-fn keyIn(table: *Table, keyIndex: u32) ![]const u8 {
-    if (keyidx < table.nkval)
-        return table.kval[keyidx].key;
-
-    keyidx -= table.nkval;
-    if (keyidx < table.narr)
-        return table.arr[keyidx].key;
-
-    keyidx -= table.narr;
-    if (keyidx < table.ntable)
-        return table.table[keyidx].key;
-
-    return error.NotFound;
-}
-
-fn rawIn(table: *Table, key: []const u8) ![]const u8 {
-    var i: u32;
-    return while (i < table.nkval) : (i += 1) {
-        if (0 == strcmp(key, table.kval[i].key))
-            break table.table[i];
-    } else error.NotFound;
-}
-
-fn arrayIn(table: *Table, key: u8) !*Array {
-    var i: u32;
-    return while (i < table.narr) : (i += 1) {
-        if (0 == strcmp(key, table.array[i].key))
-            break table.table[i];
-    } else error.NotFound;
-}
-
-fn tableIn(table: *Table, key: u8) !*Table {
-    var i: u32;
-    return while (i < table.ntab) : (i += 1) {
-        if (0 == strcmp(key, table.table[i].key))
-            break table.table[i];
-    } else error.NotFound;
-}
-
-fn rawAt(array: *Array, index: u32) !*u8 {
-    if (array.kind != 'v')
-        return error.InvalidInput;
-
-    if (!(0 <= index and index < array.len))
-        return error.IndexOutOfBounds;
-
-    // union type
-    return array.TomlType.value[index];
-}
-
-fn arrayKind(array: *Array) u8 {
-    return array.kind;
-}
-
-fn arrayType(array: *Array) u8 {
-    if (array.kind != 'v')
-        return error.InvalidInput;
-
-    if (array.len == 0)
-        return 0;
-
-    return array.type;
-}
-
-fn arrayLen(array: *Array) i32 {
-    return arr.len;
-}
-
-fn arrayKey(array: *Array) !*u8 {
-    if (array == undefined)
-        return error.Undefined; // TODO: can this even happen?
-
-    return array.key;
-}
-
-fn tableNKval(table: *Table) i32 {
-    return tab.nkval;
-}
-
-fn tableNArr(table: *Table) i32 {
-    return table.narr;
-}
-
-fn tableNTab(table: *Table) i32 {
-    return tab.ntab;
-}
-
-fn tableKey(table: *Table) !*u8 {
-    if (table == undefined)
-        return error.TableNotDefined;
-
-    return table.key;
-}
-
-fn arrayAt(array: *Array, index: u32) !*Array {
-    if (array.kind != 'a')
-        return error.InvalidInput;
-
-    if (!(0 <= index and index < array.len))
-        return error.IndexNotInRange;
-
-    return array.array[index];
-}
-
-fn tableAt(array: *Array, index: u32) !*Table {
-    if (array.kind != 't')
-        return error.InvalidInput;
-
-    if (!(0 <= idx and idx < array.len))
-        return error.IndexNotInRange;
-
-    return array.Table[idx];
-}
+#define MALLOC(a)     ppmalloc(a)
+#define FREE(a)       ppfree(a)
+#define CALLOC(a,b)   ppcalloc(a,b)
+#define REALLOC(a,b)  pprealloc(a,b)
 
 // add fn, and move return type to end
 // "zdt ifn$a "zpJ
@@ -790,7 +29,7 @@ fn tableAt(array: *Array, index: u32) !*Table {
 // `]a: ""px
 
 fn STRDUP(s: []const u8*) char* {
-    var len: c_int = strlen(s);
+    var len: int = strlen(s);
     var p: char* = MALLOC(len+1);
 
     if (p) {
@@ -814,12 +53,12 @@ fn STRNDUP(s: []const u8*, n: size_t) char* {
 }
 
 
-/// Convert a char in utf8 c_into UCS, and store it in *ret.
+/// Convert a char in utf8 into UCS, and store it in *ret.
 /// Return #bytes consumed or -1 on failure.
-fn toml_utf8_to_ucs(orig: []const u8*, len: c_int, ret: c_int64_t*) c_int {
+fn toml_utf8_to_ucs(orig: []const u8*, len: int, ret: int64_t*) int {
     var buf: const unsigned char* = (const unsigned char*) orig;
     var i: unsigned = *buf++;
-    var v: c_int64_t;
+    var v: int64_t;
 
    // 0x00000000 - 0x0000007F:
    // 0xxxxxxx
@@ -835,7 +74,7 @@ fn toml_utf8_to_ucs(orig: []const u8*, len: c_int, ret: c_int64_t*) c_int {
    if (0x6 == (i >> 5)) {
        if (len < 2) return -1;
        v = i & 0x1f;
-       for (c_int j = 0; j < 1; j++) {
+       for (int j = 0; j < 1; j++) {
            i = *buf++;
            if (0x2 != (i >> 6)) return -1;
            v = (v << 6) | (i & 0x3f);
@@ -849,7 +88,7 @@ fn toml_utf8_to_ucs(orig: []const u8*, len: c_int, ret: c_int64_t*) c_int {
         if (0xE == (i >> 4)) {
             if (len < 3) return -1;
             v = i & 0x0F;
-            for (c_int j = 0; j < 2; j++) {
+            for (int j = 0; j < 2; j++) {
                 i = *buf++;
                 if (0x2 != (i >> 6)) return -1;
                 v = (v << 6) | (i & 0x3f);
@@ -863,7 +102,7 @@ fn toml_utf8_to_ucs(orig: []const u8*, len: c_int, ret: c_int64_t*) c_int {
         if (0x1E == (i >> 3)) {
             if (len < 4) return -1;
             v = i & 0x07;
-            for (c_int j = 0; j < 3; j++) {
+            for (int j = 0; j < 3; j++) {
                 i = *buf++;
                 if (0x2 != (i >> 6)) return -1;
                 v = (v << 6) | (i & 0x3f);
@@ -877,7 +116,7 @@ fn toml_utf8_to_ucs(orig: []const u8*, len: c_int, ret: c_int64_t*) c_int {
         if (0x3E == (i >> 2)) {
             if (len < 5) return -1;
             v = i & 0x03;
-            for (c_int j = 0; j < 4; j++) {
+            for (int j = 0; j < 4; j++) {
                 i = *buf++;
                 if (0x2 != (i >> 6)) return -1;
                 v = (v << 6) | (i & 0x3f);
@@ -891,7 +130,7 @@ fn toml_utf8_to_ucs(orig: []const u8*, len: c_int, ret: c_int64_t*) c_int {
         if (0x7e == (i >> 1)) {
             if (len < 6) return -1;
             v = i & 0x01;
-            for (c_int j = 0; j < 5; j++) {
+            for (int j = 0; j < 5; j++) {
                 i = *buf++;
                 if (0x2 != (i >> 6)) return -1;
                 v = (v << 6) | (i & 0x3f);
@@ -906,8 +145,8 @@ fn toml_utf8_to_ucs(orig: []const u8*, len: c_int, ret: c_int64_t*) c_int {
 ///  Return #bytes used in buf to encode the char, or 
 ///  -1 on error.
     
-fn toml_ucs_to_utf8(code: c_int64_t, buf: [6]char) c_int {
-    // http://stackoverflow.com/questions/6240055/manually-converting-unicode-codepoc_ints-c_into-utf-8-and-utf-16 
+fn toml_ucs_to_utf8(code: int64_t, buf: [6]char) c_int {
+    // http://stackoverflow.com/questions/6240055/manually-converting-unicode-codepoints-into-utf-8-and-utf-16 
     // The UCS code values 0xd800–0xdfff (UTF-16 surrogates) as well
     // as 0xfffe and 0xffff (UCS noncharacters) should not appear in
     // conforming UTF-8 streams.
@@ -987,55 +226,55 @@ fn toml_ucs_to_utf8(code: c_int64_t, buf: [6]char) c_int {
 #define TOSTRING(x)  STRINGIFY(x)
 #define FLINE __FILE__ ":" TOSTRING(__LINE__)
 
-static tokentype_t next_token(*Context* context, c_int dotisspecial);
+static tokentype_t next_token(*Context* context, int dotisspecial);
 
 // error routines. All these functions longjmp to context->jmp 
-fn e_outofmemory(*Context* context, []const u8* fline) c_int {
-    snprc_intf(context->errbuf, context->errbufsz, "ERROR: out of memory (%s)", fline);
+fn e_outofmemory(*Context* context, []const u8* fline) int {
+    snprintf(context->errbuf, context->errbufsz, "ERROR: out of memory (%s)", fline);
     longjmp(context->jmp, 1);
     return -1;
 }
 
 
-fn e_c_internal_error(*Context* context, []const u8* fline) c_int {
-    snprc_intf(context->errbuf, context->errbufsz, "c_internal error (%s)", fline);
+fn e_internal_error(*Context* context, []const u8* fline) int {
+    snprintf(context->errbuf, context->errbufsz, "internal error (%s)", fline);
     longjmp(context->jmp, 1);
     return -1;
 }
 
-fn e_syntax_error(*Context* context, c_int lineNum, []const u8* msg) c_int {
-    snprc_intf(context->errbuf, context->errbufsz, "line %d: %s", lineNum, msg);
+fn e_syntax_error(*Context* context, int lineNum, []const u8* msg) int {
+    snprintf(context->errbuf, context->errbufsz, "line %d: %s", lineNum, msg);
     longjmp(context->jmp, 1);
     return -1;
 }
 
-fn e_bad_key_error(*Context* context, c_int lineNum) c_int {
-    snprc_intf(context->errbuf, context->errbufsz, "line %d: bad key", lineNum);
+fn e_bad_key_error(*Context* context, int lineNum) int {
+    snprintf(context->errbuf, context->errbufsz, "line %d: bad key", lineNum);
     longjmp(context->jmp, 1);
     return -1;
 }
 
-fn e_noimpl(*Context* context, []const u8* feature) c_int {
-    snprc_intf(context->errbuf, context->errbufsz, "not implemented: %s", feature);
+fn e_noimpl(*Context* context, []const u8* feature) int {
+    snprintf(context->errbuf, context->errbufsz, "not implemented: %s", feature);
     longjmp(context->jmp, 1);
     return -1;
 }
 
-fn e_key_exists_error(*Context* context, c_int lineNum, []const u8* key) c_int {
-    snprc_intf(context->errbuf, context->errbufsz,
+fn e_key_exists_error(*Context* context, int lineNum, []const u8* key) int {
+    snprintf(context->errbuf, context->errbufsz,
             "line %d: key %s exists", lineNum, key);
     longjmp(context->jmp, 1);
     return -1;
 }
  
 
-fn norm_lit_str(src: []const u8*, srclen: c_int, multiline: c_int, errbuf: char*, errbufsz: c_int) char* {
+fn norm_lit_str(src: []const u8*, srclen: int, multiline: int, errbuf: char*, errbufsz: int) char* {
     var dst: char* = 0;              // will write to dst[] and return it 
-    var max: c_int   = 0;              // max size of dst[] 
-    var off: c_int   = 0;              // cur offset in dst[] 
+    var max: int   = 0;              // max size of dst[] 
+    var off: int   = 0;              // cur offset in dst[] 
     var sp: []const u8* = src;
     var sq: []const u8* = src + srclen;
-    var ch: c_int;
+    var ch: int;
 
     // scan forward on src 
     for (;;) {
@@ -1043,7 +282,7 @@ fn norm_lit_str(src: []const u8*, srclen: c_int, multiline: c_int, errbuf: char*
             char* x = REALLOC(dst, max += 50);
             if (!x) {
                 xfree(dst);
-                snprc_intf(errbuf, errbufsz, "out of memory");
+                snprintf(errbuf, errbufsz, "out of memory");
                 return 0;
             }
             dst = x;
@@ -1059,7 +298,7 @@ fn norm_lit_str(src: []const u8*, srclen: c_int, multiline: c_int, errbuf: char*
                 || (ch == 0x7f)) {
             if (! (multiline and (ch == '\r' || ch == '\n'))) {
                 xfree(dst);
-                snprc_intf(errbuf, errbufsz, "invalid char U+%04x", ch);
+                snprintf(errbuf, errbufsz, "invalid char U+%04x", ch);
                 return 0;
             }
         }
@@ -1076,13 +315,13 @@ fn norm_lit_str(src: []const u8*, srclen: c_int, multiline: c_int, errbuf: char*
 // Convert src to raw unescaped utf-8 string.
 // Returns NULL if error with errmsg in errbuf.
     
-fn norm_basic_str(src: []const u8*, srclen: c_int, multiline: c_int, errbuf: char*, errbufsz: c_int) char* {
+fn norm_basic_str(src: []const u8*, srclen: int, multiline: int, errbuf: char*, errbufsz: int) char* {
     var dst: char* = 0;              // will write to dst[] and return it 
-    var max: c_int   = 0;              // max size of dst[] 
-    var off: c_int   = 0;              // cur offset in dst[] 
+    var max: int   = 0;              // max size of dst[] 
+    var off: int   = 0;              // cur offset in dst[] 
     var sp: []const u8* = src;
     var sq: []const u8* = src + srclen;
-    var ch: c_int = undefined;
+    var ch: int = undefined;
 
     // scan forward on src 
     for (;;) {
@@ -1090,7 +329,7 @@ fn norm_basic_str(src: []const u8*, srclen: c_int, multiline: c_int, errbuf: cha
             char* x = REALLOC(dst, max += 50);
             if (!x) {
                 xfree(dst);
-                snprc_intf(errbuf, errbufsz, "out of memory");
+                snprintf(errbuf, errbufsz, "out of memory");
                 return 0;
             }
             dst = x;
@@ -1107,7 +346,7 @@ fn norm_basic_str(src: []const u8*, srclen: c_int, multiline: c_int, errbuf: cha
                     || (ch == 0x7f)) {
                 if (! (multiline and (ch == '\r' || ch == '\n'))) {
                     xfree(dst);
-                    snprc_intf(errbuf, errbufsz, "invalid char U+%04x", ch);
+                    snprintf(errbuf, errbufsz, "invalid char U+%04x", ch);
                     return 0;
                 }
             }
@@ -1119,7 +358,7 @@ fn norm_basic_str(src: []const u8*, srclen: c_int, multiline: c_int, errbuf: cha
 
         // ch was backslash. we expect the escape char. 
         if (sp >= sq) {
-            snprc_intf(errbuf, errbufsz, "last backslash is invalid");
+            snprintf(errbuf, errbufsz, "last backslash is invalid");
             xfree(dst);
             return 0;
         }
@@ -1140,28 +379,28 @@ fn norm_basic_str(src: []const u8*, srclen: c_int, multiline: c_int, errbuf: cha
         switch (ch) {
             case 'u': case 'U':
                 {
-                    var ucs: c_int64_t = 0;
-                    var nhex: c_int = (ch == 'u' ? 4 : 8);
-                    for (c_int i = 0; i < nhex; i++) {
+                    var ucs: int64_t = 0;
+                    var nhex: int = (ch == 'u' ? 4 : 8);
+                    for (int i = 0; i < nhex; i++) {
                         if (sp >= sq) {
-                            snprc_intf(errbuf, errbufsz, "\\%c expects %d hex chars", ch, nhex);
+                            snprintf(errbuf, errbufsz, "\\%c expects %d hex chars", ch, nhex);
                             xfree(dst);
                             return 0;
                         }
                         ch = *sp++;
-                        var v: c_int = ('0' <= ch and ch <= '9')
+                        var v: int = ('0' <= ch and ch <= '9')
                             ? ch - '0'
                             : (('A' <= ch and ch <= 'F') ? ch - 'A' + 10 : -1);
                         if (-1 == v) {
-                            snprc_intf(errbuf, errbufsz, "invalid hex chars for \\u or \\U");
+                            snprintf(errbuf, errbufsz, "invalid hex chars for \\u or \\U");
                             xfree(dst);
                             return 0;
                         }
                         ucs = ucs * 16 + v;
                     }
-                    var n: c_int = toml_ucs_to_utf8(ucs, &dst[off]);
+                    var n: int = toml_ucs_to_utf8(ucs, &dst[off]);
                     if (-1 == n) {
-                        snprc_intf(errbuf, errbufsz, "illegal ucs code in \\u or \\U");
+                        snprintf(errbuf, errbufsz, "illegal ucs code in \\u or \\U");
                         xfree(dst);
                         return 0;
                     }
@@ -1177,7 +416,7 @@ fn norm_basic_str(src: []const u8*, srclen: c_int, multiline: c_int, errbuf: cha
             case '"':  ch = '"'; break;
             case '\\': ch = '\\'; break;
             default: 
-                       snprc_intf(errbuf, errbufsz, "illegal escape char \\%c", ch);
+                       snprintf(errbuf, errbufsz, "illegal escape char \\%c", ch);
                        xfree(dst);
                        return 0;
         }
@@ -1195,15 +434,15 @@ fn norm_basic_str(src: []const u8*, srclen: c_int, multiline: c_int, errbuf: cha
 fn normalize_key(context: *Context*, strtok: token_t) char* {
     var sp: []const u8* = strtok.ptr;
     var sq: []const u8* = strtok.ptr + strtok.len;
-    var lineNum: c_int = strtok.lineNum;
+    var lineNum: int = strtok.lineNum;
     var ret: char*;
-    var ch: c_int = *sp;
+    var ch: int = *sp;
     var ebuf: char[80];
 
     // handle quoted string 
     if (ch == '\'' || ch == '\"') {
         // if ''' or """, take 3 chars off front and back. Else, take 1 char off. 
-        var multiline: c_int = 0;
+        var multiline: int = 0;
         if (sp[1] == ch and sp[2] == ch)  {
             sp += 3, sq -= 3;
             multiline = 1;
@@ -1221,7 +460,7 @@ fn normalize_key(context: *Context*, strtok: token_t) char* {
             // for double quote, we need to normalize 
             ret = norm_basic_str(sp, sq - sp, multiline, ebuf, sizeof(ebuf));
             if (!ret) {
-                snprc_intf(context->errbuf, context->errbufsz, "line %d: %s", lineNum, ebuf);
+                snprintf(context->errbuf, context->errbufsz, "line %d: %s", lineNum, ebuf);
                 longjmp(context->jmp, 1);
             }
         }
@@ -1238,7 +477,7 @@ fn normalize_key(context: *Context*, strtok: token_t) char* {
     // for bare-key allow only this regex: [A-Za-z0-9_-]+ 
     var xp: []const u8*;
     for (xp = sp; xp != sq; xp++) {
-        var k: c_int = *xp;
+        var k: int = *xp;
         if (isalnum(k)) continue;
         if (k == '_' || k == '-') continue;
         e_bad_key_error(context, lineNum);
@@ -1253,22 +492,22 @@ fn normalize_key(context: *Context*, strtok: token_t) char* {
     return ret;
 }
 
-fn key_kind(tab: *table, key: []const u8*) c_int {
+fn key_kind(tab: *table, key: []const u8*) int {
     return check_key(tab, key, 0, 0, 0);
 }
 
 /// Create an array in an array 
     
-fn create_array_in_array(context: *Context, parent: *Array) *Array {
-    var n: c_int = parent->nelem;
-    var base: *Array*;
-    if (0 == (base = (*Array*) REALLOC(parent->u.arr, (n+1) * sizeof(*base)))) {
+fn create_array_in_array(context: *Context, parent: *array) *array {
+    var n: int = parent->nelem;
+    var base: *array*;
+    if (0 == (base = (*array*) REALLOC(parent->u.arr, (n+1) * sizeof(*base)))) {
         e_outofmemory(context, FLINE);
         return 0;               // not reached 
     }
     parent->u.arr = base;
 
-    if (0 == (base[n] = (*Array) CALLOC(1, sizeof(*base[n])))) {
+    if (0 == (base[n] = (*array) CALLOC(1, sizeof(*base[n])))) {
         e_outofmemory(context, FLINE);
         return 0;               // not reached 
     }
@@ -1279,7 +518,7 @@ fn create_array_in_array(context: *Context, parent: *Array) *Array {
 /// Create a table in an array 
     
 fn create_table_in_array(context: *Context, parent: *Array) *Table {
-    c_int n = parent->nelem;
+    int n = parent->nelem;
     var base: **Table = undefined;
 
     if (0 == (base = (*table*) REALLOC(parent->u.tab, (n+1) * sizeof(*base)))) {
@@ -1299,7 +538,7 @@ fn create_table_in_array(context: *Context, parent: *Array) *Table {
 
 #define SKIP_NEWLINES(context, isdotspecial)  while (context->tok.tok == NEWLINE) next_token(context, isdotspecial)
 #define EAT_TOKEN(context, typ, isdotspecial)											\
-    if ((context)->tok.tok != typ) e_c_internal_error(context, FLINE); else next_token(context, isdotspecial)
+    if ((context)->tok.tok != typ) e_internal_error(context, FLINE); else next_token(context, isdotspecial)
 
 
 /// We are at '{ ... }'.
@@ -1344,7 +583,7 @@ if (context->tok.tok != RBRACE) {
 EAT_TOKEN(context, RBRACE, 1);
 }
 
-fn valtype([]const u8* val) c_int {
+fn valtype([]const u8* val) int {
     toml_timestamp_t ts;
     if (*val == '\'' || *val == '"') return 's';
     if (0 == toml_rtob(val, 0)) return 'b';
@@ -1360,7 +599,7 @@ fn valtype([]const u8* val) c_int {
 
 
 // We are at '[...]' 
-fn parse_array(*Context* context, *Array arr) void {
+fn parse_array(*Context* context, *array arr) void {
     EAT_TOKEN(context, LBRACKET, 0);
 
     for (;;) {
@@ -1373,7 +612,7 @@ fn parse_array(*Context* context, *Array arr) void {
             case STRING:
                 {
                     char* val = context->tok.ptr;
-                    c_int   vlen = context->tok.len;
+                    int   vlen = context->tok.len;
 
                     // set array kind if this will be the first entry 
                     if (arr->kind == 0) arr->kind = 'v';
@@ -1517,7 +756,7 @@ fn parse_keyval(*Context* context, *table tab) void {
 
         case LBRACKET:
             { // key = [ array ] 
-                *Array arr = create_keyarray_in_table(context, tab, key, 0);
+                *array arr = create_keyarray_in_table(context, tab, key, 0);
                 parse_array(context, arr);
                 return;
             }
@@ -1541,8 +780,8 @@ fn parse_keyval(*Context* context, *table tab) void {
 // There will be at least one entry on return.
     
 fn fill_tabpath(*Context* context) void {
-    c_int lineNum = context->tok.lineNum;
-    c_int i;
+    int lineNum = context->tok.lineNum;
+    int i;
 
     // clear tpath 
     for (i = 0; i < context->tpath.top; i++) {
@@ -1593,11 +832,11 @@ fn walk_tabpath(*Context* context) void {
     // start from root 
     *table curtab = context->root;
 
-    for (c_int i = 0; i < context->tpath.top; i++) {
+    for (int i = 0; i < context->tpath.top; i++) {
         []const u8* key = context->tpath.key[i];
 
         *keyval nextval = 0;
-        *Array nextarr = 0;
+        *array nextarr = 0;
         *table nexttab = 0;
         switch (check_key(curtab, key, &nextval, &nextarr, &nexttab)) {
             case 't':
@@ -1607,11 +846,11 @@ fn walk_tabpath(*Context* context) void {
             case 'a':
                 // found an array. nexttab is the last table in the array. 
                 if (nextarr->kind != 't') {
-                    e_c_internal_error(context, FLINE);
+                    e_internal_error(context, FLINE);
                     return;         // not reached 
                 }
                 if (nextarr->nelem == 0) {
-                    e_c_internal_error(context, FLINE);
+                    e_internal_error(context, FLINE);
                     return;         // not reached 
                 }
                 nexttab = nextarr->u.tab[nextarr->nelem-1];
@@ -1623,7 +862,7 @@ fn walk_tabpath(*Context* context) void {
 
             default:
                 { // Not found. Let's create an implicit table. 
-                    c_int n = curtab->ntab;
+                    int n = curtab->ntab;
                     *table* base = (*table*) REALLOC(curtab->tab, (n+1) * sizeof(*base));
                     if (0 == base) {
                         e_outofmemory(context, FLINE);
@@ -1663,7 +902,7 @@ fn parse_select(*Context* context) void {
     assert(context->tok.tok == LBRACKET);
 
     // true if [[ 
-    c_int llb = (context->tok.ptr + 1 < context->stop and context->tok.ptr[1] == '[');
+    int llb = (context->tok.ptr + 1 < context->stop and context->tok.ptr[1] == '[');
     // need to detect '[[' on our own because next_token() will skip whitespace, 
     and '[ [' would be taken as '[[', which is wrong. 
 
@@ -1690,7 +929,7 @@ fn parse_select(*Context* context) void {
         context->curtab = create_keytable_in_table(context, context->curtab, z);
     } else {
         // [[x.y.z]] -> create z = [] in x.y 
-        *Array arr = 0;
+        *array arr = 0;
         {
             char* zstr = normalize_key(context, z);
             arr = toml_array_in(context->curtab, zstr);
@@ -1699,7 +938,7 @@ fn parse_select(*Context* context) void {
         if (!arr) {
             arr = create_keyarray_in_table(context, context->curtab, z, 't');
             if (!arr) {
-                e_c_internal_error(context, FLINE);
+                e_internal_error(context, FLINE);
                 return;
             }
         }
@@ -1711,7 +950,7 @@ fn parse_select(*Context* context) void {
         // add to z[] 
         *table dest;
         {
-            c_int n = arr->nelem;
+            int n = arr->nelem;
             *table* base = REALLOC(arr->u.tab, (n+1) * sizeof(*base));
             if (0 == base) {
                 e_outofmemory(context, FLINE);
@@ -1755,7 +994,7 @@ fn parse_select(*Context* context) void {
 }
 
 
-fn toml_parse(char* conf, char* errbuf, c_int errbufsz) *table {
+fn toml_parse(char* conf, char* errbuf, int errbufsz) *table {
     *Context context;
 
     // clear errbuf 
@@ -1778,7 +1017,7 @@ fn toml_parse(char* conf, char* errbuf, c_int errbufsz) *table {
     // make a root table
     if (0 == (context.root = CALLOC(1, sizeof(*context.root)))) {
         // do not call outofmemory() here... setjmp not done yet 
-        snprc_intf(context.errbuf, context.errbufsz, "ERROR: out of memory (%s)", FLINE);
+        snprintf(context.errbuf, context.errbufsz, "ERROR: out of memory (%s)", FLINE);
         return 0;
     }
 
@@ -1788,7 +1027,7 @@ fn toml_parse(char* conf, char* errbuf, c_int errbufsz) *table {
     if (0 != setjmp(context.jmp)) {
         // Got here from a long_jmp. Something bad has happened.
         // Free resources and return error.
-        for (c_int i = 0; i < context.tpath.top; i++) xfree(context.tpath.key[i]);
+        for (int i = 0; i < context.tpath.top; i++) xfree(context.tpath.key[i]);
         toml_free(context.root);
         return 0;
     }
@@ -1816,46 +1055,46 @@ fn toml_parse(char* conf, char* errbuf, c_int errbufsz) *table {
                 break;
 
             default:
-                snprc_intf(context.errbuf, context.errbufsz, "line %d: syntax error", tok.lineNum);
+                snprintf(context.errbuf, context.errbufsz, "line %d: syntax error", tok.lineNum);
                 longjmp(context.jmp, 1);
         }
     }
 
     // success 
-    for (c_int i = 0; i < context.tpath.top; i++) xfree(context.tpath.key[i]);
+    for (int i = 0; i < context.tpath.top; i++) xfree(context.tpath.key[i]);
     return context.root;
 }
 
 
-fn toml_parse_file(FILE* fp, char* errbuf, c_int errbufsz) *table {
-    c_int bufsz = 0;
+fn toml_parse_file(FILE* fp, char* errbuf, int errbufsz) *table {
+    int bufsz = 0;
     char* buf = 0;
-    c_int off = 0;
+    int off = 0;
 
     // prime the buf[] 
     bufsz = 1000;
     if (! (buf = MALLOC(bufsz + 1))) {
-        snprc_intf(errbuf, errbufsz, "out of memory");
+        snprintf(errbuf, errbufsz, "out of memory");
         return 0;
     }
 
-    // read from fp c_into buf 
+    // read from fp into buf 
     while (! feof(fp)) {
         bufsz += 1000;
 
         // Allocate 1 extra byte because we will tag on a NUL 
         char* x = REALLOC(buf, bufsz + 1);
         if (!x) {
-            snprc_intf(errbuf, errbufsz, "out of memory");
+            snprintf(errbuf, errbufsz, "out of memory");
             xfree(buf);
             return 0;
         }
         buf = x;
 
         errno = 0;
-        c_int n = fread(buf + off, 1, bufsz - off, fp);
+        int n = fread(buf + off, 1, bufsz - off, fp);
         if (ferror(fp)) {
-            snprc_intf(errbuf, errbufsz, "%s",
+            snprintf(errbuf, errbufsz, "%s",
                     errno ? strerror(errno) : "Error reading file");
             xfree(buf);
             return 0;
@@ -1882,23 +1121,23 @@ fn xfree_kval(*keyval p) void {
 
 static void xfree_tab(*table p);
 
-fn xfree_arr(*Array p) void {
+fn xfree_arr(*array p) void {
     if (!p) return;
 
     xfree(p->key);
     switch (p->kind) {
         case 'v':
-            for (c_int i = 0; i < p->nelem; i++) xfree(p->u.val[i]);
+            for (int i = 0; i < p->nelem; i++) xfree(p->u.val[i]);
             xfree(p->u.val);
             break;
 
         case 'a':
-            for (c_int i = 0; i < p->nelem; i++) xfree_arr(p->u.arr[i]);
+            for (int i = 0; i < p->nelem; i++) xfree_arr(p->u.arr[i]);
             xfree(p->u.arr);
             break;
 
         case 't':
-            for (c_int i = 0; i < p->nelem; i++) xfree_tab(p->u.tab[i]);
+            for (int i = 0; i < p->nelem; i++) xfree_tab(p->u.tab[i]);
             xfree(p->u.tab);
             break;
     }
@@ -1908,7 +1147,7 @@ fn xfree_arr(*Array p) void {
 
 
 fn xfree_tab(*table p) void {
-    var i: c_int = undefined;
+    int i;
 
     if (!p) return;
 
@@ -1927,12 +1166,12 @@ fn xfree_tab(*table p) void {
 }
 
 
-fn toml_free(tab: *table) void {
+fn toml_free(*table tab) void {
     xfree_tab(tab);
 }
 
 
-fn ret_token(context: **Context, tok: tokentype_t, lineNum: c_int, ptr: char*, len: c_int) tokentype_t {
+fn ret_token(*Context* context, tokentype_t tok, int lineNum, char* ptr, int len) tokentype_t {
     token_t t;
     t.tok = tok;
     t.lineNum = lineNum;
@@ -1944,7 +1183,7 @@ fn ret_token(context: **Context, tok: tokentype_t, lineNum: c_int, ptr: char*, l
 }
 
 
-fn scan_string(context: *Context, p: char*, lineNum: c_int, dotisspecial: c_int) tokentype_t {
+fn scan_string(context: *Context, char* p, lineNum: int, dotisspecial: int) tokentype_t {
     var orig: char* = p;
 
     if (0 == strncmp(p, "'''", 3)) {
@@ -1958,9 +1197,9 @@ fn scan_string(context: *Context, p: char*, lineNum: c_int, dotisspecial: c_int)
     }
 
     if (0 == strncmp(p, "\"\"\"", 3)) {
-        var hexreq: c_int = 0;         // #hex required 
-        var escape: c_int = 0;
-        var qcnt: c_int = 0;           // count quote 
+        hexreq: int = 0;         // #hex required 
+        escape: int = 0;
+        qcnt: int = 0;           // count quote 
         for (p += 3; *p and qcnt < 3; p++) {
             if (escape) {
                 escape = 0;
@@ -1999,8 +1238,8 @@ fn scan_string(context: *Context, p: char*, lineNum: c_int, dotisspecial: c_int)
     }
 
     if ('\"' == *p) {
-        var hexreq: c_int = 0;         // #hex required 
-        var escape: c_int = 0;
+        hexreq: int = 0;         // #hex required 
+        escape: int = 0;
         for (p++; *p; p++) {
             if (escape) {
                 escape = 0;
@@ -2040,7 +1279,7 @@ fn scan_string(context: *Context, p: char*, lineNum: c_int, dotisspecial: c_int)
 
     // literals 
     for ( ; *p and *p != '\n'; p++) {
-        var ch: c_int = *p;
+        int ch = *p;
         if (ch == '.' and dotisspecial) break;
         if ('A' <= ch and ch <= 'Z') continue;
         if ('a' <= ch and ch <= 'z') continue;
@@ -2053,21 +1292,21 @@ fn scan_string(context: *Context, p: char*, lineNum: c_int, dotisspecial: c_int)
 
 
 
-fn toml_rtots(src_: []const u8*, ret: *timestamp) c_int {
+fn toml_rtots(src_: []const u8*, ret: *timestamp) int {
     if (! src_) return -1;
 
     var p: []const u8* = src_;
-    var must_parse_time: c_int = 0;
+    var must_parse_time: int = 0;
 
     memset(ret, 0, sizeof(*ret));
 
-    var year: c_int* = &ret->__buffer.year;
-    var month: c_int* = &ret->__buffer.month;
-    var day: c_int* = &ret->__buffer.day;
-    var hour: c_int* = &ret->__buffer.hour;
-    var minute: c_int* = &ret->__buffer.minute;
-    var second: c_int* = &ret->__buffer.second;
-    var millisec: c_int* = &ret->__buffer.millisec;
+    var year: int* = &ret->__buffer.year;
+    var month: int* = &ret->__buffer.month;
+    var day: int* = &ret->__buffer.day;
+    var hour: int* = &ret->__buffer.hour;
+    var minute: int* = &ret->__buffer.minute;
+    var second: int* = &ret->__buffer.second;
+    var millisec: int* = &ret->__buffer.millisec;
 
     // parse date YYYY-MM-DD 
     if (0 == scan_date(p, year, month, day)) {
@@ -2086,9 +1325,9 @@ fn toml_rtots(src_: []const u8*, ret: *timestamp) c_int {
 
     // parse time HH:MM:SS 
     if (0 == scan_time(p, hour, minute, second)) {
-        ret.hour   = hour;
-        ret.minute = minute;
-        ret.second = second;
+        ret->hour   = hour;
+        ret->minute = minute;
+        ret->second = second;
 
         // optionally, parse millisec 
         p += 8;
@@ -2104,14 +1343,14 @@ fn toml_rtots(src_: []const u8*, ret: *timestamp) c_int {
                 *millisec /= 10;
             }
 
-            ret.millisec = millisec;
+            ret->millisec = millisec;
             p = qq;
         }
 
         if (*p) {
             // parse and copy Z 
-            var z: char* = ret.__buffer.z;
-            ret.z = z;
+            var z: char* = ret->__buffer.z;
+            ret->z = z;
             if (*p == 'Z' || *p == 'z') {
                 *z++ = 'Z'; p++;
                 *z = 0;
@@ -2138,7 +1377,7 @@ fn toml_rtots(src_: []const u8*, ret: *timestamp) c_int {
     if (*p != 0)
         return -1;
 
-    if (must_parse_time and !ret.hour)
+    if (must_parse_time and !ret->hour)
         return -1;
 
     return 0;

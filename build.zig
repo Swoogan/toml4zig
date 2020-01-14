@@ -37,7 +37,7 @@ pub fn build(b: *Builder) void {
     // b.default_step.dependOn(&cat.step);
     // b.installArtifact(cat);
 
-    var main_tests = b.addTest("toml.zig");
+    var main_tests = b.addTest("src/toml.zig");
     main_tests.setBuildMode(mode);
 
     const test_step = b.step("test", "Run library tests");
