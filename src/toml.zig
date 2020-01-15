@@ -1,6 +1,7 @@
 // MIT License
 //
 // Copyright (c) 2017 - 2019 CK Tan
+// Translation to Zig, Copyright (c) 2020 Colin Svingen
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -91,8 +92,7 @@ const TokenType = enum {
 const Token = struct {
     kind: TokenType,
     lineNumber: u32,
-    pointer: *u8, // points into context->start
-    len: u32,
+    slice: []const u8, // points into context.start
     eof: u32,
 };
 
@@ -137,14 +137,12 @@ fn createKeyValueInTable(context: *Context, table: *Table, keyToken: Token) !Key
 
     if (0 == (base = (*keyval*) REALLOC(tab->kval, (n+1) * sizeof(*base)))) {
         xfree(newkey);
-        // e_outofmemory(ctx, FLINE);
         return error.OutOfMemory;
     }
     tab.kval = base;
 
     if (0 == (base[n] = (*keyval) CALLOC(1, sizeof(*base[n])))) {
         xfree(newkey);
-        // e_outofmemory(ctx, FLINE);
         return error.OutOfMemory;
     }
 
@@ -203,7 +201,7 @@ fn createKeyTableInTable(context: *Context, table: *Table, keyToken: Token) !*Ta
 fn createKeyArrayInTable(context *Context, table: *Table, keytok Token, kind: u8) !*Array {
     // first, normalize the key to be used for lookup. 
     // remember to free it if we error out. 
-    char* newkey = normalize_key(context, keytok);
+    char* newkey = normalizeKey(context, keytok);
     
     // if key exists: error out 
     if (key_kind(tab, newkey)) {
@@ -789,28 +787,13 @@ fn tableAt(array: *Array, index: u32) !*Table {
 // `]ea: ""px
 // `]a: ""px
 
-fn STRDUP(s: []const u8*) char* {
-    var len: c_int = strlen(s);
-    var p: char* = MALLOC(len+1);
+/// copy a string
+fn copyString(allocator: *Allocator, source: []const u8) ![]u8 {
+    const result = try allocator.alloc(u8, source.len);
+    errdefer allocator.free(result);
 
-    if (p) {
-        memcpy(p, s, len);
-        p[len] = 0;
-    }
-
-    return p;
-}
-
-fn STRNDUP(s: []const u8*, n: size_t) char* {
-    var len: size_t = strnlen(s, n);
-    var p: char* = MALLOC(len+1);
-
-    if (p) {
-        memcpy(p, s, len);
-        p[len] = 0;
-    }
-
-    return p;
+    mem.copy(u8, result, source);
+    return result;
 }
 
 
@@ -987,7 +970,7 @@ fn toml_ucs_to_utf8(code: c_int64_t, buf: [6]char) c_int {
 #define TOSTRING(x)  STRINGIFY(x)
 #define FLINE __FILE__ ":" TOSTRING(__LINE__)
 
-static tokentype_t next_token(*Context* context, c_int dotisspecial);
+static TokenType next_token(*Context* context, c_int dotisspecial);
 
 // error routines. All these functions longjmp to context->jmp 
 fn e_outofmemory(*Context* context, []const u8* fline) c_int {
@@ -1191,31 +1174,32 @@ fn norm_basic_str(src: []const u8*, srclen: c_int, multiline: c_int, errbuf: cha
 }
 
 
-// Normalize a key. Convert all special chars to raw unescaped utf-8 chars. 
-fn normalize_key(context: *Context*, strtok: token_t) char* {
-    var sp: []const u8* = strtok.ptr;
-    var sq: []const u8* = strtok.ptr + strtok.len;
-    var lineNum: c_int = strtok.lineNum;
-    var ret: char*;
-    var ch: c_int = *sp;
-    var ebuf: char[80];
+/// Normalize a key. Convert all special chars to raw unescaped utf-8 chars. 
+fn normalizeKey(context: *Context, strtok: Token) []const u8 {
+    var str = strtok.slice;
+    var lineNum = strtok.lineNum;
+    var ret: []const u8 = undefined;
+    var ebuf: [80]u8;
+
+    var i: u32 = 0;
+    var ch: u8 = str[0];
 
     // handle quoted string 
     if (ch == '\'' || ch == '\"') {
         // if ''' or """, take 3 chars off front and back. Else, take 1 char off. 
-        var multiline: c_int = 0;
-        if (sp[1] == ch and sp[2] == ch)  {
-            sp += 3, sq -= 3;
-            multiline = 1;
+        var multiline: bool = false;
+        if (str[1] == ch and str[2] == ch)  {
+            i += 3, j -= 3;
+            multiline = true;
         }
-        else
-            sp++, sq--;
+        else {
+            i += 1, j -= 1;
+        }
 
         if (ch == '\'') {
             // for single quote, take it verbatim. 
-            if (! (ret = STRNDUP(sp, sq - sp))) {
-                e_outofmemory(context, FLINE);
-                return 0;       // not reached 
+            if (! (ret = STRNDUP(str, i, j))) {
+                return error.OutOfMemory;
             }
         } else {
             // for double quote, we need to normalize 
@@ -1468,7 +1452,7 @@ key = [ array ]
 key = { table }
     
 fn parse_keyval(*Context* context, *table tab) void {
-    token_t key = context->tok;
+    Token key = context->tok;
     EAT_TOKEN(context, STRING, 1);
 
     if (context->tok.tok == DOT) {
@@ -1479,7 +1463,7 @@ fn parse_keyval(*Context* context, *table tab) void {
             
             *table subtab = 0;
         {
-            char* subtabstr = normalize_key(context, key);
+            char* subtabstr = normalizeKey(context, key);
             subtab = toml_table_in(tab, subtabstr);
             xfree(subtabstr);
         }
@@ -1502,7 +1486,7 @@ fn parse_keyval(*Context* context, *table tab) void {
         case STRING:
             { // key = "value" 
                 *keyval keyval = create_keyval_in_table(context, tab, key);
-                token_t val = context->tok;
+                Token val = context->tok;
                 assert(keyval->val == 0);
                 keyval->val = STRNDUP(val.ptr, val.len);
                 if (! keyval->val) {
@@ -1564,7 +1548,7 @@ fn fill_tabpath(*Context* context) void {
         }
 
         context->tpath.tok[context->tpath.top] = context->tok;
-        context->tpath.key[context->tpath.top] = normalize_key(context, context->tok);
+        context->tpath.key[context->tpath.top] = normalizeKey(context, context->tok);
         context->tpath.top++;
 
         next_token(context, 1);
@@ -1678,7 +1662,7 @@ fn parse_select(*Context* context) void {
 
     // For [x.y.z] or [[x.y.z]], remove z from tpath. 
     
-        token_t z = context->tpath.tok[context->tpath.top-1];
+        Token z = context->tpath.tok[context->tpath.top-1];
     xfree(context->tpath.key[context->tpath.top-1]);
     context->tpath.top--;
 
@@ -1692,7 +1676,7 @@ fn parse_select(*Context* context) void {
         // [[x.y.z]] -> create z = [] in x.y 
         *Array arr = 0;
         {
-            char* zstr = normalize_key(context, z);
+            char* zstr = normalizeKey(context, z);
             arr = toml_array_in(context->curtab, zstr);
             xfree(zstr);
         }
@@ -1755,8 +1739,8 @@ fn parse_select(*Context* context) void {
 }
 
 
-fn toml_parse(char* conf, char* errbuf, c_int errbufsz) *table {
-    *Context context;
+fn parse(conf: char*, errbuf: char*, errbufsz: c_int) *Table {
+    var context: *Context; = undefined;
 
     // clear errbuf 
     if (errbufsz <= 0) errbufsz = 0;
@@ -1794,30 +1778,34 @@ fn toml_parse(char* conf, char* errbuf, c_int errbufsz) *table {
     }
 
     // Scan forward until EOF 
-    for (token_t tok = context.tok; ! tok.eof ; tok = context.tok) {
-        switch (tok.tok) {
+    var token = context.token;
+    while (!token.eof) : (token = context.token) {
+        switch (token.token) {
 
-            case NEWLINE:
+            NEWLINE => {
                 next_token(&context, 1);
                 break;
+            },
 
-            case STRING:
+            STRING => {
                 parse_keyval(&context, context.curtab);
-                if (context.tok.tok != NEWLINE) {
-                    e_syntax_error(&context, context.tok.lineNum, "extra chars after value");
+                if (context.token.token != NEWLINE) {
+                    e_syntax_error(&context, context.token.lineNum, "extra chars after value");
                     return 0;         // not reached 
                 }
 
                 EAT_TOKEN(&context, NEWLINE, 1);
                 break;
-
-            case LBRACKET:  // [ x.y.z ] or [[ x.y.z ]] 
+            },
+            // [ x.y.z ] or [[ x.y.z ]] 
+            LBRACKET => {
                 parse_select(&context);
                 break;
-
-            default:
-                snprc_intf(context.errbuf, context.errbufsz, "line %d: syntax error", tok.lineNum);
+            },
+            default => {
+                snprc_intf(context.errbuf, context.errbufsz, "line %d: syntax error", token.lineNum);
                 longjmp(context.jmp, 1);
+            }
         }
     }
 
@@ -1826,17 +1814,19 @@ fn toml_parse(char* conf, char* errbuf, c_int errbufsz) *table {
     return context.root;
 }
 
+const TomlParser = struct {
 
-fn toml_parse_file(FILE* fp, char* errbuf, c_int errbufsz) *table {
-    c_int bufsz = 0;
-    char* buf = 0;
-    c_int off = 0;
+
+
+fn parseFile(allocator: *Allocator, errbuf: []const u8) *Table {
+    var buf: []const u8 = 0;
+    var off: c_int = 0;
 
     // prime the buf[] 
     bufsz = 1000;
     if (! (buf = MALLOC(bufsz + 1))) {
-        snprc_intf(errbuf, errbufsz, "out of memory");
-        return 0;
+        //snprc_intf(errbuf, errbufsz, "out of memory");
+        return error.OutOfMemory;
     }
 
     // read from fp c_into buf 
@@ -1846,14 +1836,14 @@ fn toml_parse_file(FILE* fp, char* errbuf, c_int errbufsz) *table {
         // Allocate 1 extra byte because we will tag on a NUL 
         char* x = REALLOC(buf, bufsz + 1);
         if (!x) {
-            snprc_intf(errbuf, errbufsz, "out of memory");
+            // snprc_intf(errbuf, errbufsz, "out of memory");
             xfree(buf);
-            return 0;
+            return error.OutOfMemory; 
         }
         buf = x;
 
         errno = 0;
-        c_int n = fread(buf + off, 1, bufsz - off, fp);
+        var n: c_int = fread(buf + off, 1, bufsz - off, fp);
         if (ferror(fp)) {
             snprc_intf(errbuf, errbufsz, "%s",
                     errno ? strerror(errno) : "Error reading file");
@@ -1867,7 +1857,7 @@ fn toml_parse_file(FILE* fp, char* errbuf, c_int errbufsz) *table {
     buf[off] = 0; // we accounted for this byte in the REALLOC() above. 
 
     // parse it, cleanup and finish 
-    *table ret = toml_parse(buf, errbuf, errbufsz);
+    *table ret = parse(buf, errbuf, errbufsz);
     xfree(buf);
     return ret;
 }
@@ -1932,19 +1922,20 @@ fn toml_free(tab: *table) void {
 }
 
 
-fn ret_token(context: **Context, tok: tokentype_t, lineNum: c_int, ptr: char*, len: c_int) tokentype_t {
-    token_t t;
-    t.tok = tok;
-    t.lineNum = lineNum;
-    t.ptr = ptr;
-    t.len = len;
-    t.eof = 0;
-    context->tok = t;
+fn ret_token(context: **Context, token: TokenType, lineNum: c_int, ptr: char*, len: c_int) TokenType {
+    var t = Token {
+        .token = token,
+        .lineNum = lineNum,
+        .ptr = ptr,
+        .len = len,
+        .eof = 0,
+    }
+    context.token = t;
     return tok;
 }
 
 
-fn scan_string(context: *Context, p: char*, lineNum: c_int, dotisspecial: c_int) tokentype_t {
+fn scan_string(context: *Context, p: char*, lineNum: c_int, dotisspecial: c_int) TokenType {
     var orig: char* = p;
 
     if (0 == strncmp(p, "'''", 3)) {
