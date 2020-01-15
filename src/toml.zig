@@ -1023,91 +1023,91 @@ fn toml_ucs_to_utf8(code: i64, buf: [6]u8) !u8 {
 //}
  
 
-fn norm_lit_str(src: []const u8, multiline: bool, errbuf: char*, errbufsz: c_int) char* {
-    var dst: char* = 0;              // will write to dst[] and return it 
-    var max: c_int   = 0;              // max size of dst[] 
-    var off: c_int   = 0;              // cur offset in dst[] 
-    var sp: []const u8* = src;
-    var sq: []const u8* = src + srclen;
-    var ch: c_int;
+fn norm_lit_str(allocator: *Allocator, src: []const u8, multiline: bool, errbuf: []const u8) []const u8 {
+    var dst: []u8 = undefined;   // will write to dst[] and return it 
+    var max: u16  = 0;           // max size of dst[] 
+    var off: u16  = 0;           // cur offset in dst[] 
+    var sp : u16  = 0;
+    var sq : u16  = src.len;
+    var ch : u8;
+
+    dst = try allocator.alloc(u8, 50);
+    errdefer allocator.free(dst);
 
     // scan forward on src 
-    for (;;) {
+    while (true) {
         if (off >=  max - 10) { // have some slack for misc stuff 
-            char* x = REALLOC(dst, max += 50);
-            if (!x) {
-                xfree(dst);
-                snprc_intf(errbuf, errbufsz, "out of memory");
-                return 0;
-            }
-            dst = x;
+            max += 50;
+            dst = try allocator.realloc(dst, max);
         }
 
         // finished? 
         if (sp >= sq) break; 
 
-        ch = *sp++;
+        ch = src[sp];
+        sp += 1;
         // control characters other than tab is not allowed 
         if ((0 <= ch and ch <= 0x08)
                 || (0x0a <= ch and ch <= 0x1f)
                 || (ch == 0x7f)) {
-            if (! (multiline and (ch == '\r' || ch == '\n'))) {
-                xfree(dst);
+            if (! (multiline and (ch == '\r' or ch == '\n'))) {
                 snprc_intf(errbuf, errbufsz, "invalid char U+%04x", ch);
-                return 0;
+                return error.InvalidChar;
             }
         }
 
         // a plain copy suffice
-        dst[off++] = ch;
+        dst[off] = ch;
+        off+=1;
     }
 
-    dst[off++] = 0;
+    dst[off] = 0;
+    off+=1;
     return dst;
 }
 
 
-// Convert src to raw unescaped utf-8 string.
-// Returns NULL if error with errmsg in errbuf.
+/// Convert src to raw unescaped utf-8 string.
+/// Returns NULL if error with errmsg in errbuf.
     
-fn norm_basic_str(src: []const u8*, srclen: c_int, multiline: c_int, errbuf: char*, errbufsz: c_int) char* {
-    var dst: char* = 0;              // will write to dst[] and return it 
+fn norm_basic_str(src: []const u8, multiline: bool, errbuf: [*]u8, errbufsz: u32) ![]const u8 {
+    var dst: []u8 = undefined;              // will write to dst[] and return it 
     var max: c_int   = 0;              // max size of dst[] 
     var off: c_int   = 0;              // cur offset in dst[] 
-    var sp: []const u8* = src;
-    var sq: []const u8* = src + srclen;
-    var ch: c_int = undefined;
+    var sp: u16 = 0;
+    var sq: u16 = src.len;
+    var ch: u8 = undefined;
+    
+    dst = try allocator.alloc(u8, 50);
+    errdefer allocator.free(dst);
 
     // scan forward on src 
-    for (;;) {
+    while (true) {
         if (off >=  max - 10) { // have some slack for misc stuff 
-            char* x = REALLOC(dst, max += 50);
-            if (!x) {
-                xfree(dst);
-                snprc_intf(errbuf, errbufsz, "out of memory");
-                return 0;
-            }
-            dst = x;
+            max += 50;
+            dst = try allocator.realloc(dst, max);
         }
 
         // finished? 
         if (sp >= sq) break; 
 
-        ch = *sp++;
+        ch = src[sp];
+        sp += 1;
+        
         if (ch != '\\') {
             // these chars must be escaped: U+0000 to U+0008, U+000A to U+001F, U+007F 
             if ((0 <= ch and ch <= 0x08)
                     || (0x0a <= ch and ch <= 0x1f)
                     || (ch == 0x7f)) {
-                if (! (multiline and (ch == '\r' || ch == '\n'))) {
-                    xfree(dst);
+                if (! (multiline and (ch == '\r' or ch == '\n'))) {
                     snprc_intf(errbuf, errbufsz, "invalid char U+%04x", ch);
-                    return 0;
+                    return error.InvalidChar;
                 }
             }
 
             // a plain copy suffice
-            dst[off++] = ch;
+            dst[off] = ch;
+            off += 1;
             continue;
         }
 
@@ -1130,57 +1130,65 @@ fn norm_basic_str(src: []const u8*, srclen: c_int, multiline: c_int, errbuf: cha
         }
 
         // get the escaped char 
-        ch = *sp++;
+        ch = src[sp];
+        sp += 1;
         switch (ch) {
-            case 'u': case 'U':
+            'u' or 'U' =>
+            {
+                var ucs: c_int64_t = 0;
+                var nhex: c_int = if (ch == 'u') 4 else 8;
                 {
-                    var ucs: c_int64_t = 0;
-                    var nhex: c_int = (ch == 'u' ? 4 : 8);
-                    for (c_int i = 0; i < nhex; i++) {
+                    var i = 0;
+
+                    while (i < nhex) : (i+=1) {
                         if (sp >= sq) {
                             snprc_intf(errbuf, errbufsz, "\\%c expects %d hex chars", ch, nhex);
-                            xfree(dst);
                             return 0;
                         }
-                        ch = *sp++;
-                        var v: c_int = ('0' <= ch and ch <= '9')
-                            ? ch - '0'
-                            : (('A' <= ch and ch <= 'F') ? ch - 'A' + 10 : -1);
+
+                        ch = src[sp];
+                        sp += 1;
+                        var v: c_int = if ('0' <= ch and ch <= '9')
+                            ch - '0'
+                        else (if ('A' <= ch and ch <= 'F')  ch - 'A' + 10 else -1);
+
                         if (-1 == v) {
                             snprc_intf(errbuf, errbufsz, "invalid hex chars for \\u or \\U");
-                            xfree(dst);
                             return 0;
                         }
                         ucs = ucs * 16 + v;
                     }
-                    var n: c_int = toml_ucs_to_utf8(ucs, &dst[off]);
-                    if (-1 == n) {
-                        snprc_intf(errbuf, errbufsz, "illegal ucs code in \\u or \\U");
-                        xfree(dst);
-                        return 0;
-                    }
-                    off += n;
                 }
+                var n: c_int = toml_ucs_to_utf8(ucs, &dst[off]);
+                if (-1 == n) {
+                    snprc_intf(errbuf, errbufsz, "illegal ucs code in \\u or \\U");
+                    xfree(dst);
+                    return 0;
+                }
+                off += n;
                 continue;
+            },
 
-            case 'b': ch = '\b'; break;
-            case 't': ch = '\t'; break;
-            case 'n': ch = '\n'; break;
-            case 'f': ch = '\f'; break;
-            case 'r': ch = '\r'; break;
-            case '"':  ch = '"'; break;
-            case '\\': ch = '\\'; break;
-            default: 
-                       snprc_intf(errbuf, errbufsz, "illegal escape char \\%c", ch);
-                       xfree(dst);
-                       return 0;
+            'b' => ch = '\b',
+            't' => ch = '\t',
+            'n' => ch = '\n',
+            'f' => ch = '\f',
+            'r' => ch = '\r',
+            '"' =>  ch = '"',
+            '\\' => ch = '\\',
+            else => { 
+                snprc_intf(errbuf, errbufsz, "illegal escape char \\%c", ch);
+                return 0;
+            }
         }
 
-        dst[off++] = ch;
+        dst[off] = ch;
+        off += 1;
     }
 
     // Cap with NUL and return it.
-    dst[off++] = 0; 
+    dst[off] = 0; 
+    off += 1;
     return dst;
 }
 
@@ -1196,28 +1204,27 @@ fn normalizeKey(context: *Context, strtok: Token) []const u8 {
     var ch: u8 = str[0];
 
     // handle quoted string 
-    if (ch == '\'' || ch == '\"') {
+    if (ch == '\'' or ch == '\"') {
         // if ''' or """, take 3 chars off front and back. Else, take 1 char off. 
         var multiline: bool = false;
         if (str[1] == ch and str[2] == ch)  {
-            i += 3, j -= 3;
+            i += 3; j -= 3;
             multiline = true;
         }
         else {
-            i += 1, j -= 1;
+            i += 1; j -= 1;
         }
 
         if (ch == '\'') {
             // for single quote, take it verbatim. 
-            if (! (ret = STRNDUP(str, i, j))) {
-                return error.OutOfMemory;
-            }
-        } else {
+            try ret = STRNDUP(str, i, j);
+        } 
+        else {
             // for double quote, we need to normalize 
             ret = norm_basic_str(sp, sq - sp, multiline, ebuf, sizeof(ebuf));
             if (!ret) {
-                snprc_intf(context->errbuf, context->errbufsz, "line %d: %s", lineNum, ebuf);
-                longjmp(context->jmp, 1);
+                snprc_intf(context.errbuf, context.errbufsz, "line %d: %s", lineNum, ebuf);
+                longjmp(context.jmp, 1);
             }
         }
 
@@ -1231,7 +1238,7 @@ fn normalizeKey(context: *Context, strtok: Token) []const u8 {
     }
 
     // for bare-key allow only this regex: [A-Za-z0-9_-]+ 
-    var xp: []const u8*;
+    var xp: []const u8;
     for (xp = sp; xp != sq; xp++) {
         var k: c_int = *xp;
         if (isalnum(k)) continue;
