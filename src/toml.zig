@@ -49,25 +49,37 @@ pub const KeyValue = struct {
 
 pub const Array = struct {
     key: []const u8, // key to this array
-    kind: u8, // element kind: 'v'alue, 'a'rray, or 't'able
-    type: u8, // for value kind: 'i'nt, 'd'ouble, 'b'ool, 's'tring, 't'ime, 'D'ate, 'T'imestamp
+    kind: u8,        // element kind: 'v'alue, 'a'rray, or 't'able
+    type: u8,        // for value kind: 'i'nt, 'd'ouble, 'b'ool, 's'tring, 't'ime, 'D'ate, 'T'imestamp
 
-    len: u32, // number of elements
+    len: u32,        // number of elements
     u: TomlType,
 };
 
 pub const Table = struct {
-    key: []const u8, // key to this table
-    implicit: bool, // table was created implicitly
+    key: []const u8,  // key to this table
+    implicit: bool,   // table was created implicitly
 
     // key-values in the table
-    pairs: []KeyValue,
+    pairs: std.ArrayList(KeyValue),
 
     // arrays in the table
-    arrays: []Array,
+    arrays: std.ArrayList(Array),
 
     // tables in the table
-    tables: []Table,
+    tables: std.ArrayList(Table),
+
+    fn init(allocator: *Allocator) !void {
+        pairs.init(allocator);
+        arrays.init(allocator);
+        tables.init(allocator);
+    }
+
+    fn deinit() void {
+        pairs.deinit();
+        arrays.deinit();
+        tables.deinit();
+    }
 };
 
 pub const TomlType = union(enum) {
@@ -106,6 +118,8 @@ const Context = struct {
     root: *Table,
     currentTable: *Table,
 
+    allocator: *Allocator,
+
     path = struct {
         top: i32,
         key: [10]u8,
@@ -114,122 +128,96 @@ const Context = struct {
 };
 
 const tabPath = struct {
-    cnt: i32,
+    count: u32,
     key: [10]Token,
 };
 
 /// Create a keyval in the table.
 fn createKeyValueInTable(context: *Context, table: *Table, keyToken: Token) !KeyValue {
     // first, normalize the key to be used for lookup.
-    // remember to free it if we error out.
     var newkey = normalizeKey(context, keyToken);
+    errdefer context.allocator.free(newkey);
 
     // if key exists: error out
     if (keyKind(table, newkey)) {
-        xfree(newkey);
         // e_key_exists_error(context, keyToken.lineNum, newkey);
         return error.KeyExists;
     }
 
     // make a new entry
-    var n = table.nkval;
-    var base: **KeyValue;
+    var len = table.pairs.len;
+    var size = (len+1) * @sizeOf(KeyValue);
 
-    if (0 == (base = (*keyval*) REALLOC(tab->kval, (n+1) * sizeof(*base)))) {
-        xfree(newkey);
-        return error.OutOfMemory;
-    }
-    tab.kval = base;
+    var al = context.allocator;
+    table.pairs = try al.realloc(table.pairs, size);
 
-    if (0 == (base[n] = (*keyval) CALLOC(1, sizeof(*base[n])))) {
-        xfree(newkey);
-        return error.OutOfMemory;
-    }
+//    if (0 == (base[n] = (*keyval) CALLOC(1, sizeof(*base[n])))) {
+//        xfree(newkey);
+//        return error.OutOfMemory;
+//    }
 
     // save the key in the new value struct
-    var dest: *KeyValue = tab.kval[tab.nkval++];
-    tab.nkval += 1;
+    var dest: *KeyValue = table.pairs[table.pairs.len-1];
     dest.key = newkey;
     return dest;
 }
 
 
 /// Create a table in the table.
-fn createKeyTableInTable(context: *Context, table: *Table, keyToken: Token) !*Table {
+fn createKeyTableInTable(context: *Context, table: *Table, keyToken: Token) !Table {
     // first, normalize the key to be used for lookup. 
     // remember to free it if we error out. 
      var newkey = normalizeKey(context, keyToken);
+     errdefer context.allocator.free(newkey);
+
+     var dest: *Table = undefined;
 
      // if key exists: error out
-     var dest: *Table = undefined;
-     if (checkKey(tab, newkey, 0, 0, &dest)) {
-        xfree(newkey);           // don't need this anymore 
-      
+     if (checkKey(table, newkey, 0, 0, &dest)) {
         // special case: if table exists, but was created implicitly ...
         if (dest != undefined and dest.implicit) {
             // we make it explicit now, and simply return it
             dest.implicit = false;
             return dest;
         }
-        return error.KeyExists;
+
         // e_key_exists_error(context, keyToken.lineNum, newkey);
+        return error.KeyExists;
     }
 
     // create a new table entry 
-    var n = table.ntab;
-    var base = **Table;
-    if (0 == (base = (**Table) REALLOC(tab->tab, (n+1) * sizeof(*base)))) {
-        xfree(newkey);
-        // e_outofmemory(ctx, FLINE);
-        return error.OutOfMemory;
-    }
-    table.tab = base;
-        
-    if (0 == (base[n] = (*Table) CALLOC(1, sizeof(*base[n])))) {
-        xfree(newkey);
-        // e_outofmemory(ctx, FLINE);
-        return error.OutOfMemory;
-    }
-    dest = table.table[table.ntab++];
-    
     // save the key in the new table struct
-    dest.key = newkey;
-    return dest;
+    var t = Table {
+        .key = newkey
+    };
+
+    table.table.append(t);
+        
+    return t;
 }
 
 /// Create an array in the table.
-fn createKeyArrayInTable(context *Context, table: *Table, keytok Token, kind: u8) !*Array {
+fn createKeyArrayInTable(context: *Context, table: *Table, keytok: Token, kind: u8) !*Array {
     // first, normalize the key to be used for lookup. 
     // remember to free it if we error out. 
-    char* newkey = normalizeKey(context, keytok);
+    var newkey = normalizeKey(context, keytok);
+    errdefer context.allocator.free(newkey);
     
     // if key exists: error out 
     if (key_kind(tab, newkey)) {
-        xfree(newkey);           // don't need this anymore 
-        e_key_exists_error(context, keytok.lineno, newkey);
-        return 0;               // not reached 
+        // e_key_exists_error(context, keytok.lineno, newkey);
+        return error.KeyExists;
     }
 
     // make a new array entry
-    int n = tab->narr;
-    **Array base;
-    if (0 == (base = (**Array) realloc(tab->arr, (n+1) * sizeof(*base)))) {
-        xfree(newkey);
-        e_outofmemory(context, fline);
-        return 0;               // not reached
-    }
-    tab->arr = base;
-        
-    if (0 == (base[n] = (*Array) CALLOC(1, sizeof(*base[n])))) {
-        xfree(newkey);
-        e_outofmemory(context, FLINE);
-        return 0;               // not reached 
-    }
-    *Array dest = tab->arr[tab->narr++];
-
     // save the key in the new array struct
-    dest->key = newkey;
-	dest->kind = kind;
+    var dest = Array {
+        .key = newkey,
+        .kind = kind,
+    };
+
+    table.array.append(dest);
+
     return dest;
 }
 
@@ -779,109 +767,134 @@ fn tableAt(array: *Array, index: u32) !*Table {
     return array.Table[idx];
 }
 
-// add fn, and move return type to end
-// "zdt ifn$a "zpJ
-// add `fn`, remove `static` and move return type to end
-// df "zdt ifn$a "zpJ
-// swap indentifier <-> type order
-// `]ea: ""px
-// `]a: ""px
 
 /// copy a string
 fn copyString(allocator: *Allocator, source: []const u8) ![]u8 {
     const result = try allocator.alloc(u8, source.len);
     errdefer allocator.free(result);
-
     mem.copy(u8, result, source);
     return result;
 }
 
 
-/// Convert a char in utf8 c_into UCS, and store it in *ret.
+/// Convert a char in utf8 into UCS, and store it in *ret.
 /// Return #bytes consumed or -1 on failure.
-fn toml_utf8_to_ucs(orig: []const u8*, len: c_int, ret: c_int64_t*) c_int {
-    var buf: const unsigned char* = (const unsigned char*) orig;
-    var i: unsigned = *buf++;
-    var v: c_int64_t;
+fn toml_utf8_to_ucs(orig: []const u8) !u64 {
+    //var buf: const unsigned char* = (const unsigned char*) orig;
+    var buf = 0;
+    var i: u32 = 0;
+    var result: u64 = 0;
 
    // 0x00000000 - 0x0000007F:
    // 0xxxxxxx
 
    if (0 == (i >> 7)) {
-       if (len < 1) return -1;
-       v = i;
-       return *ret = v, 1;
+       if (orig.len < 1) 
+           return error.InvalidInput;
+
+       result = i;
+       // return *ret = result, 1;
+       return result;
    }
+
    // 0x00000080 - 0x000007FF:
    // 110xxxxx 10xxxxxx
 
-   if (0x6 == (i >> 5)) {
+    if (0x6 == (i >> 5)) {
        if (len < 2) return -1;
-       v = i & 0x1f;
-       for (c_int j = 0; j < 1; j++) {
-           i = *buf++;
-           if (0x2 != (i >> 6)) return -1;
-           v = (v << 6) | (i & 0x3f);
+       result = i & 0x1f;
+       {
+           var j = 0;
+           while (j < 1): (j+=1) {
+               i = orig[buf];
+               buf+=1;
+               if (0x2 != (i >> 6)) return -1;
+               result = (result << 6) | (i & 0x3f);
+           }
        }
-       return *ret = v, ([]const u8*) buf - orig;
-   }
+       // return result, ([]const u8*) buf - orig;
+       return result;
+    }
 
     // 0x00000800 - 0x0000FFFF:
     // 1110xxxx 10xxxxxx 10xxxxxx
         
-        if (0xE == (i >> 4)) {
-            if (len < 3) return -1;
-            v = i & 0x0F;
-            for (c_int j = 0; j < 2; j++) {
-                i = *buf++;
+    if (0xE == (i >> 4)) {
+        if (len < 3) return -1;
+        result = i & 0x0F;
+        {
+            var j = 0;
+            while (j < 2): (j+=1) {
+                i = orig[buf];
+                buf+=1;
                 if (0x2 != (i >> 6)) return -1;
                 v = (v << 6) | (i & 0x3f);
             }
-            return *ret = v, ([]const u8*) buf - orig;
         }
+        // return *ret = v, ([]const u8*) buf - orig;
+        return result;
+    }
 
     // 0x00010000 - 0x001FFFFF:
     // 11110xxx 10xxxxxx 10xxxxxx 10xxxxxx
         
-        if (0x1E == (i >> 3)) {
-            if (len < 4) return -1;
-            v = i & 0x07;
-            for (c_int j = 0; j < 3; j++) {
-                i = *buf++;
+    if (0x1E == (i >> 3)) {
+        if (len < 4) return -1;
+        result = i & 0x07;
+        {
+            var j = 0;
+            while (j < 3): (j+=1) {
+                i = orig[buf];
+                buf+=1;
                 if (0x2 != (i >> 6)) return -1;
-                v = (v << 6) | (i & 0x3f);
+                result = (result << 6) | (i & 0x3f);
             }
-            return *ret = v, ([]const u8*) buf - orig;
         }
+        // return *ret = v, ([]const u8*) buf - orig;
+        return result;
+    }
 
     // 0x00200000 - 0x03FFFFFF:
     // 111110xx 10xxxxxx 10xxxxxx 10xxxxxx 10xxxxxx
         
-        if (0x3E == (i >> 2)) {
-            if (len < 5) return -1;
-            v = i & 0x03;
-            for (c_int j = 0; j < 4; j++) {
-                i = *buf++;
-                if (0x2 != (i >> 6)) return -1;
-                v = (v << 6) | (i & 0x3f);
+    if (0x3E == (i >> 2)) {
+        if (len < 5) return -1;
+        result = i & 0x03;
+        {
+            var j = 0;
+            while (j < 4): (j+=1) {
+                i = orig[buf];
+                buf+=1;
+                if (0x2 != (i >> 6)) 
+                    return error.InvalidInput;
+                result = (result << 6) | (i & 0x3f);
             }
-            return *ret = v, ([]const u8*) buf - orig;
         }
+        // return *ret = v, ([]const u8*) buf - orig;
+        return result;
+    }
 
-        // 0x04000000 - 0x7FFFFFFF:
-        // 1111110x 10xxxxxx 10xxxxxx 10xxxxxx 10xxxxxx 10xxxxxx
+    // 0x04000000 - 0x7FFFFFFF:
+    // 1111110x 10xxxxxx 10xxxxxx 10xxxxxx 10xxxxxx 10xxxxxx
 
-        if (0x7e == (i >> 1)) {
-            if (len < 6) return -1;
-            v = i & 0x01;
-            for (c_int j = 0; j < 5; j++) {
-                i = *buf++;
-                if (0x2 != (i >> 6)) return -1;
-                v = (v << 6) | (i & 0x3f);
+    if (0x7e == (i >> 1)) {
+        if (len < 6) return -1;
+        result = i & 0x01;
+        {
+            var j = 0;
+            while (j < 5): (j+=1) {
+                i = orig[buf];
+                buf+=1;
+                if (0x2 != (i >> 6))
+                    return error.InvalidInput;
+                result = (result << 6) | (i & 0x3f);
             }
-            return *ret = v, ([]const u8*) buf - orig;
         }
-        return -1;
+        // return *ret = v, ([]const u8*) buf - orig;
+        return result;
+    }
+
+    return error.InvalidInput;
 }
 
 
@@ -889,7 +902,7 @@ fn toml_utf8_to_ucs(orig: []const u8*, len: c_int, ret: c_int64_t*) c_int {
 ///  Return #bytes used in buf to encode the char, or 
 ///  -1 on error.
     
-fn toml_ucs_to_utf8(code: c_int64_t, buf: [6]char) c_int {
+fn toml_ucs_to_utf8(code: i64, buf: [6]u8) !u8 {
     // http://stackoverflow.com/questions/6240055/manually-converting-unicode-codepoc_ints-c_into-utf-8-and-utf-16 
     // The UCS code values 0xd800–0xdfff (UTF-16 surrogates) as well
     // as 0xfffe and 0xffff (UCS noncharacters) should not appear in
@@ -901,9 +914,11 @@ fn toml_ucs_to_utf8(code: c_int64_t, buf: [6]char) c_int {
     // 0x00000000 - 0x0000007F:
     // 0xxxxxxx
 
-    if (code < 0) return -1;
+    if (code < 0)
+        return error.InvalidInput;
+
     if (code <= 0x7F) {
-        buf[0] = (unsigned char) code;
+        buf[0] = @intCast(u8, code);
         return 1;
     }
 
@@ -966,53 +981,49 @@ fn toml_ucs_to_utf8(code: c_int64_t, buf: [6]char) c_int {
 }
 
 
-#define STRINGIFY(x) #x
-#define TOSTRING(x)  STRINGIFY(x)
-#define FLINE __FILE__ ":" TOSTRING(__LINE__)
-
-static TokenType next_token(*Context* context, c_int dotisspecial);
+//static TokenType next_token(*Context* context, c_int dotisspecial);
 
 // error routines. All these functions longjmp to context->jmp 
-fn e_outofmemory(*Context* context, []const u8* fline) c_int {
-    snprc_intf(context->errbuf, context->errbufsz, "ERROR: out of memory (%s)", fline);
-    longjmp(context->jmp, 1);
-    return -1;
-}
-
-
-fn e_c_internal_error(*Context* context, []const u8* fline) c_int {
-    snprc_intf(context->errbuf, context->errbufsz, "c_internal error (%s)", fline);
-    longjmp(context->jmp, 1);
-    return -1;
-}
-
-fn e_syntax_error(*Context* context, c_int lineNum, []const u8* msg) c_int {
-    snprc_intf(context->errbuf, context->errbufsz, "line %d: %s", lineNum, msg);
-    longjmp(context->jmp, 1);
-    return -1;
-}
-
-fn e_bad_key_error(*Context* context, c_int lineNum) c_int {
-    snprc_intf(context->errbuf, context->errbufsz, "line %d: bad key", lineNum);
-    longjmp(context->jmp, 1);
-    return -1;
-}
-
-fn e_noimpl(*Context* context, []const u8* feature) c_int {
-    snprc_intf(context->errbuf, context->errbufsz, "not implemented: %s", feature);
-    longjmp(context->jmp, 1);
-    return -1;
-}
-
-fn e_key_exists_error(*Context* context, c_int lineNum, []const u8* key) c_int {
-    snprc_intf(context->errbuf, context->errbufsz,
-            "line %d: key %s exists", lineNum, key);
-    longjmp(context->jmp, 1);
-    return -1;
-}
+//fn e_outofmemory(*Context context, []const u8* fline) c_int {
+//    snprc_intf(context->errbuf, context->errbufsz, "ERROR: out of memory (%s)", fline);
+//    longjmp(context->jmp, 1);
+//    return -1;
+//}
+//
+//
+//fn e_c_internal_error(*Context* context, []const u8* fline) c_int {
+//    snprc_intf(context->errbuf, context->errbufsz, "c_internal error (%s)", fline);
+//    longjmp(context->jmp, 1);
+//    return -1;
+//}
+//
+//fn e_syntax_error(*Context* context, c_int lineNum, []const u8* msg) c_int {
+//    snprc_intf(context->errbuf, context->errbufsz, "line %d: %s", lineNum, msg);
+//    longjmp(context->jmp, 1);
+//    return -1;
+//}
+//
+//fn e_bad_key_error(*Context* context, c_int lineNum) c_int {
+//    snprc_intf(context->errbuf, context->errbufsz, "line %d: bad key", lineNum);
+//    longjmp(context->jmp, 1);
+//    return -1;
+//}
+//
+//fn e_noimpl(*Context* context, []const u8* feature) c_int {
+//    snprc_intf(context->errbuf, context->errbufsz, "not implemented: %s", feature);
+//    longjmp(context->jmp, 1);
+//    return -1;
+//}
+//
+//fn e_key_exists_error(*Context* context, c_int lineNum, []const u8* key) c_int {
+//    snprc_intf(context->errbuf, context->errbufsz,
+//            "line %d: key %s exists", lineNum, key);
+//    longjmp(context->jmp, 1);
+//    return -1;
+//}
  
 
-fn norm_lit_str(src: []const u8*, srclen: c_int, multiline: c_int, errbuf: char*, errbufsz: c_int) char* {
+fn norm_lit_str(src: []const u8, multiline: bool, errbuf: char*, errbufsz: c_int) char* {
     var dst: char* = 0;              // will write to dst[] and return it 
     var max: c_int   = 0;              // max size of dst[] 
     var off: c_int   = 0;              // cur offset in dst[] 
