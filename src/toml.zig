@@ -88,6 +88,7 @@ pub const TomlType = union(enum) {
     table: *Table,
 };
 
+
 const TokenType = enum {
     INVALID,
     DOT,
@@ -1169,10 +1170,10 @@ fn norm_basic_str(src: []const u8, multiline: bool, errbuf: [*]u8, errbufsz: u32
                 continue;
             },
 
-            'b' => ch = '\b',
+            'b' => ch = 0x08,
             't' => ch = '\t',
             'n' => ch = '\n',
-            'f' => ch = '\f',
+            'f' => ch = 0x0C,
             'r' => ch = '\r',
             '"' =>  ch = '"',
             '\\' => ch = '\\',
@@ -1238,120 +1239,141 @@ fn normalizeKey(context: *Context, strtok: Token) []const u8 {
     }
 
     // for bare-key allow only this regex: [A-Za-z0-9_-]+ 
-    var xp: []const u8;
-    for (xp = sp; xp != sq; xp++) {
-        var k: c_int = *xp;
-        if (isalnum(k)) continue;
-        if (k == '_' || k == '-') continue;
+    var xp = sp;
+    while (xp != sq) : (xp += 1) {
+        var k = xp;
+
+        if (isalnum(k)) 
+            continue;
+
+        if (k == '_' or k == '-') 
+            continue;
+
         e_bad_key_error(context, lineNum);
-        return 0;               // not reached 
+        return error.BadKey;
     }
 
     // dup and return it 
-    if (! (ret = STRNDUP(sp, sq - sp))) {
-        e_outofmemory(context, FLINE);
-        return 0;               // not reached 
-    }
+    ret = try STRNDUP(sp, sq - sp);
+
     return ret;
 }
 
-fn key_kind(tab: *table, key: []const u8*) c_int {
+fn key_kind(tab: *Table, key: []const u8) c_int {
     return check_key(tab, key, 0, 0, 0);
 }
 
 /// Create an array in an array 
     
 fn create_array_in_array(context: *Context, parent: *Array) *Array {
-    var n: c_int = parent->nelem;
-    var base: *Array*;
-    if (0 == (base = (*Array*) REALLOC(parent->u.arr, (n+1) * sizeof(*base)))) {
-        e_outofmemory(context, FLINE);
-        return 0;               // not reached 
-    }
-    parent->u.arr = base;
-
-    if (0 == (base[n] = (*Array) CALLOC(1, sizeof(*base[n])))) {
-        e_outofmemory(context, FLINE);
-        return 0;               // not reached 
-    }
-
-    return parent->u.arr[parent->nelem++];
+//    var n: c_int = parent.len;
+//    var base: *Array = undefined;
+//    if (0 == (base = (*Array*) REALLOC(parent->u.arr, (n+1) * sizeof(*base)))) {
+//        e_outofmemory(context, FLINE);
+//        return 0;               // not reached 
+//    }
+//    parent->u.arr = base;
+//
+//    if (0 == (base[n] = (*Array) CALLOC(1, sizeof(*base[n])))) {
+//        e_outofmemory(context, FLINE);
+//        return 0;               // not reached 
+//    }
+//
+//    return parent->u.arr[parent->nelem++];
+    var a = Array {};
+    parent.u.array.append(a);
 }
 
 /// Create a table in an array 
     
 fn create_table_in_array(context: *Context, parent: *Array) *Table {
-    c_int n = parent->nelem;
-    var base: **Table = undefined;
-
-    if (0 == (base = (*table*) REALLOC(parent->u.tab, (n+1) * sizeof(*base)))) {
-        // e_outofmemory(context, FLINE);
-        return error.OutOfMemory; 
-    }
-    parent->u.tab = base;
-
-    if (0 == (base[n] = (*table) CALLOC(1, sizeof(*base[n])))) {
-        // e_outofmemory(context, FLINE);
-        return error.OutOfMemory;
-    }
-
-    return parent->u.tab[parent->nelem++];
+//    c_int n = parent->nelem;
+//    var base: **Table = undefined;
+//
+//    if (0 == (base = (*table*) REALLOC(parent->u.tab, (n+1) * sizeof(*base)))) {
+//        // e_outofmemory(context, FLINE);
+//        return error.OutOfMemory; 
+//    }
+//    parent->u.tab = base;
+//
+//    if (0 == (base[n] = (*table) CALLOC(1, sizeof(*base[n])))) {
+//        // e_outofmemory(context, FLINE);
+//        return error.OutOfMemory;
+//    }
+//
+//    return parent->u.tab[parent->nelem++];
+    var table = Table {};
+    parent.u.table.append(table);
+    return &table;
 }
 
 
-#define SKIP_NEWLINES(context, isdotspecial)  while (context->tok.tok == NEWLINE) next_token(context, isdotspecial)
-#define EAT_TOKEN(context, typ, isdotspecial)											\
-    if ((context)->tok.tok != typ) e_c_internal_error(context, FLINE); else next_token(context, isdotspecial)
+fn SKIP_NEWLINES(context: *Context, is_dot_special: bool) void {
+    while (context.token.token == NEWLINE) {
+        next_token(context, is_dot_special);
+    }
+}
+
+fn EAT_TOKEN(context: *Context, kind: TokenType, is_dot_special: bool) void {
+    if (context.token.kind != kind) {
+        e_c_internal_error(context, FLINE); 
+    }
+    else {
+        next_token(context, is_dot_special);
+    }
+}
 
 
 /// We are at '{ ... }'.
 /// Parse the table.
     
-fn parse_table(context: *Context, tab: *table) void {
+fn parse_table(context: *Context, table: *table) void {
     EAT_TOKEN(context, LBRACE, 1);
 
-    for (;;) {
-        if (context->tok.tok == NEWLINE) {
-            e_syntax_error(context, context->tok.lineNum, "newline not allowed in inline table");
-            return;				// not reached 
+    while (true) {
+        if (context.token.kind == NEWLINE) {
+            e_syntax_error(context, context.token.lineNum, "newline not allowed in inline table");
+            return error.SyntaxError;
         }
 
         // until } 
-    if (context->tok.tok == RBRACE) break;
+    if (context.token.kind == RBRACE) break;
 
-    if (context->tok.tok != STRING) {
-        e_syntax_error(context, context->tok.lineNum, "syntax error");
+    if (context.token.kind != STRING) {
+        e_syntax_error(context, context.token.lineNum, "syntax error");
         return;             // not reached 
     }
     parse_keyval(context, tab);
 
-    if (context->tok.tok == NEWLINE) {
-        e_syntax_error(context, context->tok.lineNum, "newline not allowed in inline table");
+    if (context.token.kind == NEWLINE) {
+        e_syntax_error(context, context.token.lineNum, "newline not allowed in inline table");
         return;				// not reached 
     }
 
     // on comma, continue to scan for next keyval 
-    if (context->tok.tok == COMMA) {
+    if (context.token.kind == COMMA) {
         EAT_TOKEN(context, COMMA, 1);
         continue;
     }
     break;
 }
 
-if (context->tok.tok != RBRACE) {
-    e_syntax_error(context, context->tok.lineNum, "syntax error");
+if (context.token.tok != RBRACE) {
+    e_syntax_error(context, context.token.lineNum, "syntax error");
     return;                 // not reached 
 }
 
 EAT_TOKEN(context, RBRACE, 1);
 }
 
-fn valtype([]const u8* val) c_int {
-    toml_timestamp_t ts;
-    if (*val == '\'' || *val == '"') return 's';
+fn valtype(val: []const u8) u8 {
+
+    if (val[0] == '\'' or val[0] == '"') return 's';
     if (0 == toml_rtob(val, 0)) return 'b';
     if (0 == toml_rtoi(val, 0)) return 'i';
     if (0 == toml_rtod(val, 0)) return 'd';
+
+    var ts: Timestamp = undefined;
     if (0 == toml_rtots(val, &ts)) {
         if (ts.year and ts.hour) return 'T'; // timestamp 
         if (ts.year) return 'D'; // date 
@@ -1362,101 +1384,103 @@ fn valtype([]const u8* val) c_int {
 
 
 // We are at '[...]' 
-fn parse_array(*Context* context, *Array arr) void {
+fn parse_array(context: *Context, array: *Array) void {
     EAT_TOKEN(context, LBRACKET, 0);
 
-    for (;;) {
+    while (true) {
         SKIP_NEWLINES(context, 0);
 
         // until ] 
-        if (context->tok.tok == RBRACKET) break;
+        if (context.token.kind == RBRACKET) break;
 
-        switch (context->tok.tok) {
-            case STRING:
+        switch (context.token.kind) {
+            STRING =>
                 {
-                    char* val = context->tok.ptr;
-                    c_int   vlen = context->tok.len;
+                    var val = context.token.slice;
+                    var vlen = context.token.len;
 
                     // set array kind if this will be the first entry 
-                    if (arr->kind == 0) arr->kind = 'v';
+                    if (array.kind == 0) arr.kind = 'v';
                     // check array kind 
-                    if (arr->kind != 'v') {
-                        e_syntax_error(context, context->tok.lineNum,
+                    if (arr.kind != 'v') {
+                        e_syntax_error(context, context.token.lineNum,
                                 "a string array can only contain strings");
-                        return;     // not reached 
+                        return error.SyntaxError;
                     }
 
-                    // make a new value in array 
-                    char** tmp = (char**) REALLOC(arr->u.val, (arr->nelem+1) * sizeof(*tmp));
-                    if (!tmp) {
-                        e_outofmemory(context, FLINE);
-                        return;     // not reached 
-                    }
-                    arr->u.val = tmp;
-                    if (! (val = STRNDUP(val, vlen))) {
-                        e_outofmemory(context, FLINE);
-                        return;     // not reached 
-                    }
-                    arr->u.val[arr->nelem++] = val;
+                    // TODO: make a new value in array 
+//                    char** tmp = (char**) REALLOC(arr.u.val, (arr.nelem+1) * sizeof(*tmp));
+//                    if (!tmp) {
+//                        e_outofmemory(context, FLINE);
+//                        return;     // not reached 
+//                    }
+//                    arr.u.val = tmp;
+//                    if (! (val = STRNDUP(val, vlen))) {
+//                        e_outofmemory(context, FLINE);
+//                        return;     // not reached 
+//                    }
+//                    arr.u.val[arr.nelem++] = val;
 
                     // set array type if this is the first entry, or check that the types matched. 
-                    if (arr->nelem == 1) 
-                        arr->type = valtype(arr->u.val[0]);
-                    else if (arr->type != valtype(val)) {
-                        e_syntax_error(context, context->tok.lineNum,
+                    if (array.len == 1) {
+                        array.type = valtype(array.u.val[0]);
+                    }
+                    else if (array.type != valtype(val)) {
+                        e_syntax_error(context, context.token.lineNum,
                                 "array type mismatch while processing array of values");
-                        return;     // not reached 
+                        return error.SyntaxError;
                     }
 
                     EAT_TOKEN(context, STRING, 0);
                     break;
-                }
+                },
 
-            case LBRACKET:
+            LBRACKET =>
                 { // [ [array], [array] ... ] 
                     // set the array kind if this will be the first entry 
-                    if (arr->kind == 0) arr->kind = 'a';
+                    if (arr.kind == 0) arr.kind = 'a';
                     // check array kind 
-                    if (arr->kind != 'a') {
-                        e_syntax_error(context, context->tok.lineNum,
+                    if (arr.kind != 'a') {
+                        e_syntax_error(context, context.token.lineNum,
                                 "array type mismatch while processing array of arrays");
-                        return;     // not reached 
+                        return error.SyntaxError;
                     }
                     parse_array(context, create_array_in_array(context, arr));
                     break;
-                }
+                },
 
-            case LBRACE:
+            LBRACE =>
                 { // [ {table}, {table} ... ] 
                     // set the array kind if this will be the first entry 
-                    if (arr->kind == 0) arr->kind = 't';
+                    if (arr.kind == 0) arr.kind = 't';
                     // check array kind 
-                    if (arr->kind != 't') {
-                        e_syntax_error(context, context->tok.lineNum,
+                    if (arr.kind != 't') {
+                        e_syntax_error(context, context.token.lineNum,
                                 "array type mismatch while processing array of tables");
-                        return;     // not reached 
+                        return error.SyntaxError;
                     }
                     parse_table(context, create_table_in_array(context, arr));
                     break;
-                }
+                },
 
-            default:
-                e_syntax_error(context, context->tok.lineNum, "syntax error");
-                return;             // not reached 
+            else => {
+                e_syntax_error(context, context.token.lineNum, "syntax error");
+                        return error.SyntaxError;
+            }
         }
 
         SKIP_NEWLINES(context, 0);
 
         // on comma, continue to scan for next element 
-        if (context->tok.tok == COMMA) {
+        if (context.token.kind == COMMA) {
             EAT_TOKEN(context, COMMA, 0);
             continue;
         }
         break;
     }
 
-    if (context->tok.tok != RBRACKET) {
-        e_syntax_error(context, context->tok.lineNum, "syntax error");
+    if (context.token.kind != RBRACKET) {
+        e_syntax_error(context, context.token.lineNum, "syntax error");
         return;                 // not reached 
     }
 
@@ -1465,23 +1489,23 @@ fn parse_array(*Context* context, *Array arr) void {
 
 
 // handle lines like these:
-key = "value"
-key = [ array ]
-key = { table }
+// key = "value"
+// key = [ array ]
+// key = { table }
     
-fn parse_keyval(*Context* context, *table tab) void {
-    Token key = context->tok;
+fn parse_keyval(context: *Context, tab: *table) void {
+    var key = context.token;
     EAT_TOKEN(context, STRING, 1);
 
-    if (context->tok.tok == DOT) {
+    if (key.kind == DOT) {
         // handle inline dotted key. 
-        e.g. 
-            physical.color = "orange"
-            physical.shape = "round"
+        // e.g. 
+        // physical.color = "orange"
+        // physical.shape = "round"
             
-            *table subtab = 0;
+            var subtab: *Table  = undefined;
         {
-            char* subtabstr = normalizeKey(context, key);
+            var subtabstr = normalizeKey(context, key);
             subtab = toml_table_in(tab, subtabstr);
             xfree(subtabstr);
         }
@@ -1493,87 +1517,87 @@ fn parse_keyval(*Context* context, *table tab) void {
         return;
     }
 
-    if (context->tok.tok != EQUAL) {
-        e_syntax_error(context, context->tok.lineNum, "missing =");
+    if (context.token.kind != EQUAL) {
+        e_syntax_error(context, context.token.lineNum, "missing =");
         return;                 // not reached 
     }
 
     next_token(context, 0);
 
-    switch (context->tok.tok) {
-        case STRING:
+    switch (context.token.kind) {
+        STRING =>
             { // key = "value" 
-                *keyval keyval = create_keyval_in_table(context, tab, key);
-                Token val = context->tok;
-                assert(keyval->val == 0);
-                keyval->val = STRNDUP(val.ptr, val.len);
-                if (! keyval->val) {
+                var keyval: *Keyval = create_keyval_in_table(context, tab, key);
+                var val: *KeyValue = context.token;
+                assert(keyval.value == 0);
+                keyval.value = STRNDUP(val.ptr, val.len);
+                if (! keyval.value) {
                     e_outofmemory(context, FLINE);
-                    return;         // not reached 
+                    return error.OutOfMemory; 
                 }
 
                 next_token(context, 1);
-
                 return;
-            }
+            },
 
-        case LBRACKET:
+        LBRACKET => 
             { // key = [ array ] 
-                *Array arr = create_keyarray_in_table(context, tab, key, 0);
+                var array: *Array = create_keyarray_in_table(context, tab, key, 0);
                 parse_array(context, arr);
                 return;
-            }
+            },
 
-        case LBRACE:
+        LBRACE =>
             { // key = { table } 
-                *table nxttab = create_keytable_in_table(context, tab, key);
+                var nxttab: *Table = create_keytable_in_table(context, tab, key);
                 parse_table(context, nxttab);
                 return;
-            }
+            },
 
-        default:
-            e_syntax_error(context, context->tok.lineNum, "syntax error");
-            return;                 // not reached 
+        else => {
+            e_syntax_error(context, context.token.lineNum, "syntax error");
+                        return error.SyntaxError;
+        }
     }
 }
 
 
 // at [x.y.z] or [[x.y.z]]
-// Scan forward and fill tabpath until it enters ] or ]]
-// There will be at least one entry on return.
+/// Scan forward and fill tabpath until it enters ] or ]]
+/// There will be at least one entry on return.
     
-fn fill_tabpath(*Context* context) void {
-    c_int lineNum = context->tok.lineNum;
-    c_int i;
+fn fill_tabpath(context: *Context) void {
+    var lineNum = context.token.lineNum;
+    var i = 0;
 
     // clear tpath 
-    for (i = 0; i < context->tpath.top; i++) {
-        char** p = &context->tpath.key[i];
+    while (i < context.tpath.top) : (i+=1) {
+        char** p = &context.tpath.key[i];
         xfree(*p);
         *p = 0;
     }
-    context->tpath.top = 0;
+    context.tpath.top = 0;
 
-    for (;;) {
-        if (context->tpath.top >= 10) {
+    while (true) {
+        if (context.tpath.top >= 10) {
             e_syntax_error(context, lineNum, "table path is too deep; max allowed is 10.");
-            return;             // not reached 
+                        return error.SyntaxError;
         }
 
-        if (context->tok.tok != STRING) {
+        if (context.token.kind != STRING) {
             e_syntax_error(context, lineNum, "invalid or missing key");
-            return;             // not reached 
+                        return error.SyntaxError;
         }
 
-        context->tpath.tok[context->tpath.top] = context->tok;
-        context->tpath.key[context->tpath.top] = normalizeKey(context, context->tok);
-        context->tpath.top++;
+        context.tpath.tok[context.tpath.top] = context.token;
+        context.tpath.key[context.tpath.top] = normalizeKey(context, context.token);
+        context.tpath.top++;
 
         next_token(context, 1);
 
-        if (context->tok.tok == RBRACKET) break;
+        if (context.token.kind == RBRACKET) break;
 
-        if (context->tok.tok != DOT) {
+        if (context.token.kind != DOT) {
             e_syntax_error(context, lineNum, "invalid key");
             return;             // not reached 
         }
@@ -1581,7 +1605,7 @@ fn fill_tabpath(*Context* context) void {
         next_token(context, 1);
     }
 
-    if (context->tpath.top <= 0) {
+    if (context.tpath.top <= 0) {
         e_syntax_error(context, lineNum, "empty table selector");
         return;                 // not reached 
     }
