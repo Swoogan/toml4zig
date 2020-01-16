@@ -554,8 +554,8 @@ fn rawToString(src: []const u8) ![]const u8 {
 
 fn ret_eof(context: Context, lineNum: u32) TokenType {
     ret_token(context, NEWLINE, lineno, context.stop, 0);
-    context.token.eof = 1;
-    return context.token.token;
+    context.token.n.eof = 1;
+    return context.token.n.token;
 }
 
 /// Scan p for n digits compositing entirely of [0-9]
@@ -613,12 +613,12 @@ fn scanTime(p: []const u8) !Time {
 }
 
 // fn nextToken(context: *Context, dotIsSpecial: bool) TokenType {
-//     var lineNum = context.token.lineNum;
-//     var p = context.token.pointer;
+//     var lineNum = context.token.n.lineNum;
+//     var p = context.token.n.pointer;
 //
 //     // eat this token
 //     var i: u32 = 0;
-//     for (context.token) |token| {
+//     for (context.token.n) |token| {
 //         if (*p++ == '\n')
 //             lineNum += 1;
 //     }
@@ -1290,13 +1290,13 @@ fn create_table_in_array(context: *Context, parent: *Array) *Table {
 //    c_int n = parent->nelem;
 //    var base: **Table = undefined;
 //
-//    if (0 == (base = (*table*) REALLOC(parent->u.tab, (n+1) * sizeof(*base)))) {
+//    if (0 == (base = (*Table) REALLOC(parent->u.tab, (n+1) * sizeof(*base)))) {
 //        // e_outofmemory(context, FLINE);
 //        return error.OutOfMemory; 
 //    }
 //    parent->u.tab = base;
 //
-//    if (0 == (base[n] = (*table) CALLOC(1, sizeof(*base[n])))) {
+//    if (0 == (base[n] = (*Table) CALLOC(1, sizeof(*base[n])))) {
 //        // e_outofmemory(context, FLINE);
 //        return error.OutOfMemory;
 //    }
@@ -1309,13 +1309,13 @@ fn create_table_in_array(context: *Context, parent: *Array) *Table {
 
 
 fn SKIP_NEWLINES(context: *Context, is_dot_special: bool) void {
-    while (context.token.token == NEWLINE) {
+    while (context.token.n.token == NEWLINE) {
         next_token(context, is_dot_special);
     }
 }
 
 fn EAT_TOKEN(context: *Context, kind: TokenType, is_dot_special: bool) void {
-    if (context.token.kind != kind) {
+    if (context.token.n.kind != kind) {
         e_c_internal_error(context, FLINE); 
     }
     else {
@@ -1327,39 +1327,39 @@ fn EAT_TOKEN(context: *Context, kind: TokenType, is_dot_special: bool) void {
 /// We are at '{ ... }'.
 /// Parse the table.
     
-fn parse_table(context: *Context, table: *table) void {
+fn parse_table(context: *Context, table: *Table) void {
     EAT_TOKEN(context, LBRACE, 1);
 
     while (true) {
-        if (context.token.kind == NEWLINE) {
-            e_syntax_error(context, context.token.lineNum, "newline not allowed in inline table");
+        if (context.token.n.kind == NEWLINE) {
+            e_syntax_error(context, context.token.n.lineNum, "newline not allowed in inline table");
             return error.SyntaxError;
         }
 
         // until } 
-    if (context.token.kind == RBRACE) break;
+    if (context.token.n.kind == RBRACE) break;
 
-    if (context.token.kind != STRING) {
-        e_syntax_error(context, context.token.lineNum, "syntax error");
+    if (context.token.n.kind != STRING) {
+        e_syntax_error(context, context.token.n.lineNum, "syntax error");
         return;             // not reached 
     }
     parse_keyval(context, tab);
 
-    if (context.token.kind == NEWLINE) {
-        e_syntax_error(context, context.token.lineNum, "newline not allowed in inline table");
+    if (context.token.n.kind == NEWLINE) {
+        e_syntax_error(context, context.token.n.lineNum, "newline not allowed in inline table");
         return;				// not reached 
     }
 
     // on comma, continue to scan for next keyval 
-    if (context.token.kind == COMMA) {
+    if (context.token.n.kind == COMMA) {
         EAT_TOKEN(context, COMMA, 1);
         continue;
     }
     break;
 }
 
-if (context.token.tok != RBRACE) {
-    e_syntax_error(context, context.token.lineNum, "syntax error");
+if (context.token.n.tok != RBRACE) {
+    e_syntax_error(context, context.token.n.lineNum, "syntax error");
     return;                 // not reached 
 }
 
@@ -1391,19 +1391,19 @@ fn parse_array(context: *Context, array: *Array) void {
         SKIP_NEWLINES(context, 0);
 
         // until ] 
-        if (context.token.kind == RBRACKET) break;
+        if (context.token.n.kind == RBRACKET) break;
 
-        switch (context.token.kind) {
+        switch (context.token.n.kind) {
             STRING =>
                 {
-                    var val = context.token.slice;
-                    var vlen = context.token.len;
+                    var val = context.token.n.slice;
+                    var vlen = context.token.n.len;
 
                     // set array kind if this will be the first entry 
                     if (array.kind == 0) arr.kind = 'v';
                     // check array kind 
                     if (arr.kind != 'v') {
-                        e_syntax_error(context, context.token.lineNum,
+                        e_syntax_error(context, context.token.n.lineNum,
                                 "a string array can only contain strings");
                         return error.SyntaxError;
                     }
@@ -1426,7 +1426,7 @@ fn parse_array(context: *Context, array: *Array) void {
                         array.type = valtype(array.u.val[0]);
                     }
                     else if (array.type != valtype(val)) {
-                        e_syntax_error(context, context.token.lineNum,
+                        e_syntax_error(context, context.token.n.lineNum,
                                 "array type mismatch while processing array of values");
                         return error.SyntaxError;
                     }
@@ -1441,7 +1441,7 @@ fn parse_array(context: *Context, array: *Array) void {
                     if (arr.kind == 0) arr.kind = 'a';
                     // check array kind 
                     if (arr.kind != 'a') {
-                        e_syntax_error(context, context.token.lineNum,
+                        e_syntax_error(context, context.token.n.lineNum,
                                 "array type mismatch while processing array of arrays");
                         return error.SyntaxError;
                     }
@@ -1455,7 +1455,7 @@ fn parse_array(context: *Context, array: *Array) void {
                     if (arr.kind == 0) arr.kind = 't';
                     // check array kind 
                     if (arr.kind != 't') {
-                        e_syntax_error(context, context.token.lineNum,
+                        e_syntax_error(context, context.token.n.lineNum,
                                 "array type mismatch while processing array of tables");
                         return error.SyntaxError;
                     }
@@ -1464,7 +1464,7 @@ fn parse_array(context: *Context, array: *Array) void {
                 },
 
             else => {
-                e_syntax_error(context, context.token.lineNum, "syntax error");
+                e_syntax_error(context, context.token.n.lineNum, "syntax error");
                         return error.SyntaxError;
             }
         }
@@ -1472,15 +1472,15 @@ fn parse_array(context: *Context, array: *Array) void {
         SKIP_NEWLINES(context, 0);
 
         // on comma, continue to scan for next element 
-        if (context.token.kind == COMMA) {
+        if (context.token.n.kind == COMMA) {
             EAT_TOKEN(context, COMMA, 0);
             continue;
         }
         break;
     }
 
-    if (context.token.kind != RBRACKET) {
-        e_syntax_error(context, context.token.lineNum, "syntax error");
+    if (context.token.n.kind != RBRACKET) {
+        e_syntax_error(context, context.token.n.lineNum, "syntax error");
         return;                 // not reached 
     }
 
@@ -1493,8 +1493,8 @@ fn parse_array(context: *Context, array: *Array) void {
 // key = [ array ]
 // key = { table }
     
-fn parse_keyval(context: *Context, tab: *table) void {
-    var key = context.token;
+fn parse_keyval(context: *Context, tab: *Table) void {
+    var key = context.token.n;
     EAT_TOKEN(context, STRING, 1);
 
     if (key.kind == DOT) {
@@ -1517,18 +1517,18 @@ fn parse_keyval(context: *Context, tab: *table) void {
         return;
     }
 
-    if (context.token.kind != EQUAL) {
-        e_syntax_error(context, context.token.lineNum, "missing =");
+    if (context.token.n.kind != EQUAL) {
+        e_syntax_error(context, context.token.n.lineNum, "missing =");
         return;                 // not reached 
     }
 
     next_token(context, 0);
 
-    switch (context.token.kind) {
+    switch (context.token.n.kind) {
         STRING =>
             { // key = "value" 
                 var keyval: *Keyval = create_keyval_in_table(context, tab, key);
-                var val: *KeyValue = context.token;
+                var val: *KeyValue = context.token.n;
                 assert(keyval.value == 0);
                 keyval.value = STRNDUP(val.ptr, val.len);
                 if (! keyval.value) {
@@ -1555,7 +1555,7 @@ fn parse_keyval(context: *Context, tab: *table) void {
             },
 
         else => {
-            e_syntax_error(context, context.token.lineNum, "syntax error");
+            e_syntax_error(context, context.token.n.lineNum, "syntax error");
                         return error.SyntaxError;
         }
     }
@@ -1567,7 +1567,7 @@ fn parse_keyval(context: *Context, tab: *table) void {
 /// There will be at least one entry on return.
     
 fn fill_tabpath(context: *Context) void {
-    var lineNum = context.token.lineNum;
+    var lineNum = context.token.n.lineNum;
     var i = 0;
 
     // clear tpath 
@@ -1584,20 +1584,20 @@ fn fill_tabpath(context: *Context) void {
                         return error.SyntaxError;
         }
 
-        if (context.token.kind != STRING) {
+        if (context.token.n.kind != STRING) {
             e_syntax_error(context, lineNum, "invalid or missing key");
                         return error.SyntaxError;
         }
 
-        context.tpath.tok[context.tpath.top] = context.token;
-        context.tpath.key[context.tpath.top] = normalizeKey(context, context.token);
-        context.tpath.top++;
+        context.tpath.tok[context.tpath.top] = context.token.n;
+        context.tpath.key[context.tpath.top] = normalizeKey(context, context.token.n);
+        context.tpath.top += 1;
 
         next_token(context, 1);
 
-        if (context.token.kind == RBRACKET) break;
+        if (context.token.n.kind == RBRACKET) break;
 
-        if (context.token.kind != DOT) {
+        if (context.token.n.kind != DOT) {
             e_syntax_error(context, lineNum, "invalid key");
             return;             // not reached 
         }
@@ -1615,64 +1615,65 @@ fn fill_tabpath(context: *Context) void {
 // Walk tabpath from the root, and create new tables on the way.
 // Sets context->curtab to the final table.
     
-fn walk_tabpath(*Context* context) void {
+fn walk_tabpath(context: *Context) void {
     // start from root 
-    *table curtab = context->root;
+    var curtab: *Table = context.root;
 
-    for (c_int i = 0; i < context->tpath.top; i++) {
-        []const u8* key = context->tpath.key[i];
+    var i: u32 = 0;
+    while (i < context.tpath.top) : (i += 1) {
+        var key: []const u8 = context.tpath.key[i];
 
-        *keyval nextval = 0;
-        *Array nextarr = 0;
-        *table nexttab = 0;
+        var nextval: *KeyValue = 0;
+        var nextarr: *Array = 0;
+        var nexttab: *Table = 0;
+
         switch (check_key(curtab, key, &nextval, &nextarr, &nexttab)) {
-            case 't':
+            't' => {
                 // found a table. nexttab is where we will go next. 
                 break;
-
-            case 'a':
+            },
+            'a' => {
                 // found an array. nexttab is the last table in the array. 
-                if (nextarr->kind != 't') {
+                if (nextarr.kind != 't') {
                     e_c_internal_error(context, FLINE);
-                    return;         // not reached 
+                    return error.InternalError;
                 }
-                if (nextarr->nelem == 0) {
+                if (nextarr.nelem == 0) {
                     e_c_internal_error(context, FLINE);
-                    return;         // not reached 
+                    return error.InternalError;
                 }
-                nexttab = nextarr->u.tab[nextarr->nelem-1];
+                nexttab = nextarr.u.tab[nextarr.nelem-1];
                 break;
+            },
+            'v' => {
+                e_key_exists_error(context, context.tpath.tok[i].lineNum, key);
+                return error.KeyExists;
+            },
+            else => { // Not found. Let's create an implicit table. 
+                    var n = curtab.ntab;
+                    var base: *Table = try context.allocator.alloc(Table);
+//                     if (0 == base) {
+//                         e_outofmemory(context, FLINE);
+//                         return error.OutOfMemory; 
+//                     }
+                    curtab.table = base;
+                    // base = 
 
-            case 'v':
-                e_key_exists_error(context, context->tpath.tok[i].lineNum, key);
-                return;             // not reached 
+//                     if (0 == (base[n] = (*Table) CALLOC(1, sizeof(*base[n])))) {
+//                         e_outofmemory(context, FLINE);
+//                         return error.OutOfMemory; 
+//                     }
 
-            default:
-                { // Not found. Let's create an implicit table. 
-                    c_int n = curtab->ntab;
-                    *table* base = (*table*) REALLOC(curtab->tab, (n+1) * sizeof(*base));
-                    if (0 == base) {
-                        e_outofmemory(context, FLINE);
-                        return;     // not reached 
-                    }
-                    curtab->tab = base;
+                    base[n].key = try STRDUP(key);
+//                  e_outofmemory(context, FLINE);
+//                  return error.OutOfMemory; 
 
-                    if (0 == (base[n] = (*table) CALLOC(1, sizeof(*base[n])))) {
-                        e_outofmemory(context, FLINE);
-                        return;     // not reached 
-                    }
-
-                    if (0 == (base[n]->key = STRDUP(key))) {
-                        e_outofmemory(context, FLINE);
-                        return;     // not reached 
-                    }
-
-                    nexttab = curtab->tab[curtab->ntab++];
+                    nexttab = curtab.tab[curtab.ntab];
+                    curtab.ntab += 1;
 
                     // tabs created by walk_tabpath are considered implicit 
-                    nexttab->implicit = 1;
+                    nexttab.implicit = 1;
                 }
-                break;
         }
 
         // switch to next tab 
@@ -1680,23 +1681,23 @@ fn walk_tabpath(*Context* context) void {
     }
 
     // save it 
-    context->curtab = curtab;
+    context.curtab = curtab;
 }
 
 
 // handle lines like [x.y.z] or [[x.y.z]] 
-fn parse_select(*Context* context) void {
-    assert(context->tok.tok == LBRACKET);
+fn parse_select(context: *Context) void {
+    assert(context.token.en.kind == LBRACKET);
 
     // true if [[ 
-    c_int llb = (context->tok.ptr + 1 < context->stop and context->tok.ptr[1] == '[');
+    var llb: c_int = (context.token.ptr + 1 < context.stop and context.token.ptr[1] == '[');
     // need to detect '[[' on our own because next_token() will skip whitespace, 
-    and '[ [' would be taken as '[[', which is wrong. 
+    // and '[ [' would be taken as '[[', which is wrong. 
 
         // eat [ or [[ 
         EAT_TOKEN(context, LBRACKET, 1);
     if (llb) {
-        assert(context->tok.tok == LBRACKET);
+        assert(context.token.n.kind == LBRACKET);
         EAT_TOKEN(context, LBRACKET, 1);
     }
 
@@ -1704,78 +1705,78 @@ fn parse_select(*Context* context) void {
 
     // For [x.y.z] or [[x.y.z]], remove z from tpath. 
     
-        Token z = context->tpath.tok[context->tpath.top-1];
-    xfree(context->tpath.key[context->tpath.top-1]);
-    context->tpath.top--;
+        var z: Token = context.tpath.tok[context.tpath.top-1];
+    xfree(context.tpath.key[context.tpath.top-1]);
+    context.tpath.top -= 1;
 
-    // set up context->curtab 
+    // set up context.curtab 
     walk_tabpath(context);
 
     if (! llb) {
-        // [x.y.z] -> create z = {} in x.y 
-        context->curtab = create_keytable_in_table(context, context->curtab, z);
+        // [x.y.z] . create z = {} in x.y 
+        context.curtab = create_keytable_in_table(context, context.curtab, z);
     } else {
-        // [[x.y.z]] -> create z = [] in x.y 
-        *Array arr = 0;
+        // [[x.y.z]] . create z = [] in x.y 
+        var arr: *Array = undefined;
         {
             char* zstr = normalizeKey(context, z);
-            arr = toml_array_in(context->curtab, zstr);
+            arr = toml_array_in(context.curtab, zstr);
             xfree(zstr);
         }
         if (!arr) {
-            arr = create_keyarray_in_table(context, context->curtab, z, 't');
+            arr = create_keyarray_in_table(context, context.curtab, z, 't');
             if (!arr) {
                 e_c_internal_error(context, FLINE);
                 return;
             }
         }
-        if (arr->kind != 't') {
+        if (arr.kind != 't') {
             e_syntax_error(context, z.lineNum, "array mismatch");
-            return;             // not reached 
+            return error.SyntaxError;
         }
 
         // add to z[] 
-        *table dest;
+        var dest: *Table = undefined;
         {
-            c_int n = arr->nelem;
-            *table* base = REALLOC(arr->u.tab, (n+1) * sizeof(*base));
+            var n = arr.len;
+            *Table base = REALLOC(arr.u.tab, (n+1) * sizeof(*base));
             if (0 == base) {
                 e_outofmemory(context, FLINE);
-                return;         // not reached 
+                return error.OutOfMemory; 
             }
-            arr->u.tab = base;
+            arr.u.tab = base;
 
             if (0 == (base[n] = CALLOC(1, sizeof(*base[n])))) {
                 e_outofmemory(context, FLINE);
-                return;         // not reached 
+                return error.OutOfMemory; 
             }
 
-            if (0 == (base[n]->key = STRDUP("__anon__"))) {
+            if (0 == (base[n].key = STRDUP("__anon__"))) {
                 e_outofmemory(context, FLINE);
-                return;         // not reached 
+                return error.OutOfMemory; 
             }
 
-            dest = arr->u.tab[arr->nelem++];
+            dest = arr.u.tab[arr.nelem++];
         }
 
-        context->curtab = dest;
+        context.curtab = dest;
     }
 
-    if (context->tok.tok != RBRACKET) {
-        e_syntax_error(context, context->tok.lineNum, "expects ]");
+    if (context.token.n.kind != RBRACKET) {
+        e_syntax_error(context, context.token.lineNum, "expects ]");
         return;                 // not reached 
     }
     if (llb) {
-        if (! (context->tok.ptr + 1 < context->stop and context->tok.ptr[1] == ']')) {
-            e_syntax_error(context, context->tok.lineNum, "expects ]]");
+        if (! (context.token.ptr + 1 < context.stop and context.token.ptr[1] == ']')) {
+            e_syntax_error(context, context.token.lineNum, "expects ]]");
             return; // not reached 
         }
         EAT_TOKEN(context, RBRACKET, 1);
     }
     EAT_TOKEN(context, RBRACKET, 1);
 
-    if (context->tok.tok != NEWLINE) {
-        e_syntax_error(context, context->tok.lineNum, "extra chars after ] or ]]");
+    if (context.token.n.kind != NEWLINE) {
+        e_syntax_error(context, context.token.lineNum, "extra chars after ] or ]]");
         return;                 // not reached 
     }
 }
@@ -1796,10 +1797,10 @@ fn parse(conf: char*, errbuf: char*, errbufsz: c_int) *Table {
     context.errbufsz = errbufsz;
 
     // start with an artificial newline of length 0
-    context.tok.tok = NEWLINE; 
-    context.tok.lineNum = 1;
-    context.tok.ptr = conf;
-    context.tok.len = 0;
+    context.token.n.kind = NEWLINE; 
+    context.token.lineNum = 1;
+    context.token.ptr = conf;
+    context.token.len = 0;
 
     // make a root table
     if (0 == (context.root = CALLOC(1, sizeof(*context.root)))) {
@@ -1820,8 +1821,8 @@ fn parse(conf: char*, errbuf: char*, errbufsz: c_int) *Table {
     }
 
     // Scan forward until EOF 
-    var token = context.token;
-    while (!token.eof) : (token = context.token) {
+    var token = context.token.n;
+    while (!token.eof) : (token = context.token.n) {
         switch (token.token) {
 
             NEWLINE => {
@@ -1831,8 +1832,8 @@ fn parse(conf: char*, errbuf: char*, errbufsz: c_int) *Table {
 
             STRING => {
                 parse_keyval(&context, context.curtab);
-                if (context.token.token != NEWLINE) {
-                    e_syntax_error(&context, context.token.lineNum, "extra chars after value");
+                if (context.token.n.token != NEWLINE) {
+                    e_syntax_error(&context, context.token.n.lineNum, "extra chars after value");
                     return 0;         // not reached 
                 }
 
@@ -1899,7 +1900,7 @@ fn parseFile(allocator: *Allocator, errbuf: []const u8) *Table {
     buf[off] = 0; // we accounted for this byte in the REALLOC() above. 
 
     // parse it, cleanup and finish 
-    *table ret = parse(buf, errbuf, errbufsz);
+    *Table ret = parse(buf, errbuf, errbufsz);
     xfree(buf);
     return ret;
 }
@@ -1912,7 +1913,7 @@ fn xfree_kval(*keyval p) void {
     xfree(p);
 }
 
-static void xfree_tab(*table p);
+static void xfree_tab(*Table p);
 
 fn xfree_arr(*Array p) void {
     if (!p) return;
@@ -1939,7 +1940,7 @@ fn xfree_arr(*Array p) void {
 }
 
 
-fn xfree_tab(*table p) void {
+fn xfree_tab(*Table p) void {
     var i: c_int = undefined;
 
     if (!p) return;
@@ -1959,32 +1960,32 @@ fn xfree_tab(*table p) void {
 }
 
 
-fn toml_free(tab: *table) void {
-    xfree_tab(tab);
+fn toml_free(table: *Table) void {
+    xfree_tab(table);
 }
 
 
-fn ret_token(context: **Context, token: TokenType, lineNum: c_int, ptr: char*, len: c_int) TokenType {
+fn ret_token(context: *Context, token: TokenType, lineNum: u32, slice: []const u8, len: u32) TokenType {
     var t = Token {
         .token = token,
         .lineNum = lineNum,
-        .ptr = ptr,
+        .slice = slice,
         .len = len,
         .eof = 0,
     }
-    context.token = t;
-    return tok;
+    context.token.n = t;
+    return t;
 }
 
 
-fn scan_string(context: *Context, p: char*, lineNum: c_int, dotisspecial: c_int) TokenType {
-    var orig: char* = p;
+fn scan_string(context: *Context, p: []const u8, lineNum: u32, dot_is_special: bool) TokenType {
+    var orig: []const u8 = p;
 
     if (0 == strncmp(p, "'''", 3)) {
         p = strstr(p + 3, "'''");
         if (0 == p) {
             e_syntax_error(context, lineNum, "unterminated triple-s-quote");
-            return 0;           // not reached 
+            return error.SyntaxError;
         }
 
         return ret_token(context, STRING, lineNum, orig, p + 3 - orig);
@@ -2002,13 +2003,13 @@ fn scan_string(context: *Context, p: char*, lineNum: c_int, dotisspecial: c_int)
                 if (*p == 'U') { hexreq = 8; continue; }
                 if (p[strspn(p, " \t\r")] == '\n') continue; // allow for line ending backslash 
                 e_syntax_error(context, lineNum, "bad escape char");
-                return 0;       // not reached 
+                return error.SyntaxError;
             }
             if (hexreq) {
                 hexreq--;
                 if (strchr("0123456789ABCDEF", *p)) continue;
                 e_syntax_error(context, lineNum, "expect hex char");
-                return 0;       // not reached 
+                return error.SyntaxError;
             }
             if (*p == '\\') { escape = 1; continue; }
             qcnt = (*p == '"') ? qcnt + 1 : 0; 
