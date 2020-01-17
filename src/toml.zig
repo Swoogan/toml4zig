@@ -1719,7 +1719,7 @@ fn parse_select(context: *Context) void {
         // [[x.y.z]] . create z = [] in x.y 
         var arr: *Array = undefined;
         {
-            char* zstr = normalizeKey(context, z);
+            var zstr: []const u8 = normalizeKey(context, z);
             arr = toml_array_in(context.curtab, zstr);
             xfree(zstr);
         }
@@ -1738,25 +1738,28 @@ fn parse_select(context: *Context) void {
         // add to z[] 
         var dest: *Table = undefined;
         {
+//             var n = arr.len;
+//             var base: *Table = REALLOC(arr.u.tab, (n+1) * sizeof(*base));
+//             if (0 == base) {
+//                 e_outofmemory(context, FLINE);
+//                 return error.OutOfMemory; 
+//             }
+//             arr.u.tab = base;
+// 
+//             if (0 == (base[n] = CALLOC(1, sizeof(*base[n])))) {
+//                 e_outofmemory(context, FLINE);
+//                 return error.OutOfMemory; 
+//             }
+// 
+//             if (0 == (base[n].key = STRDUP("__anon__"))) {
+//                 e_outofmemory(context, FLINE);
+//                 return error.OutOfMemory; 
+//             }
+
             var n = arr.len;
-            *Table base = REALLOC(arr.u.tab, (n+1) * sizeof(*base));
-            if (0 == base) {
-                e_outofmemory(context, FLINE);
-                return error.OutOfMemory; 
-            }
             arr.u.tab = base;
-
-            if (0 == (base[n] = CALLOC(1, sizeof(*base[n])))) {
-                e_outofmemory(context, FLINE);
-                return error.OutOfMemory; 
-            }
-
-            if (0 == (base[n].key = STRDUP("__anon__"))) {
-                e_outofmemory(context, FLINE);
-                return error.OutOfMemory; 
-            }
-
-            dest = arr.u.tab[arr.nelem++];
+            dest = arr.u.tab[arr.len];
+            arr.len += 1;
         }
 
         context.curtab = dest;
@@ -1764,12 +1767,12 @@ fn parse_select(context: *Context) void {
 
     if (context.token.n.kind != RBRACKET) {
         e_syntax_error(context, context.token.lineNum, "expects ]");
-        return;                 // not reached 
+        return error.SyntaxError;
     }
     if (llb) {
         if (! (context.token.ptr + 1 < context.stop and context.token.ptr[1] == ']')) {
             e_syntax_error(context, context.token.lineNum, "expects ]]");
-            return; // not reached 
+            return error.SyntaxError;
         }
         EAT_TOKEN(context, RBRACKET, 1);
     }
@@ -1782,8 +1785,8 @@ fn parse_select(context: *Context) void {
 }
 
 
-fn parse(conf: char*, errbuf: char*, errbufsz: c_int) *Table {
-    var context: *Context; = undefined;
+fn parse(conf: []const u8, errbuf: []const u8, errbufsz: c_int) *Table {
+    var context: *Context = undefined;
 
     // clear errbuf 
     if (errbufsz <= 0) errbufsz = 0;
@@ -1803,11 +1806,11 @@ fn parse(conf: char*, errbuf: char*, errbufsz: c_int) *Table {
     context.token.len = 0;
 
     // make a root table
-    if (0 == (context.root = CALLOC(1, sizeof(*context.root)))) {
-        // do not call outofmemory() here... setjmp not done yet 
-        snprc_intf(context.errbuf, context.errbufsz, "ERROR: out of memory (%s)", FLINE);
-        return 0;
-    }
+//     if (0 == (context.root = CALLOC(1, sizeof(*context.root)))) {
+//         // do not call outofmemory() here... setjmp not done yet 
+//         snprc_intf(context.errbuf, context.errbufsz, "ERROR: out of memory (%s)", FLINE);
+//         return 0;
+//     }
 
     // set root as default table
     context.curtab = context.root;
@@ -1815,7 +1818,8 @@ fn parse(conf: char*, errbuf: char*, errbufsz: c_int) *Table {
     if (0 != setjmp(context.jmp)) {
         // Got here from a long_jmp. Something bad has happened.
         // Free resources and return error.
-        for (c_int i = 0; i < context.tpath.top; i++) xfree(context.tpath.key[i]);
+        var i = 0;
+        while (i < context.tpath.top) : (i+=1) xfree(context.tpath.key[i]);
         toml_free(context.root);
         return 0;
     }
@@ -1853,24 +1857,25 @@ fn parse(conf: char*, errbuf: char*, errbufsz: c_int) *Table {
     }
 
     // success 
-    for (c_int i = 0; i < context.tpath.top; i++) xfree(context.tpath.key[i]);
+    var i = 0;
+    while (i < context.tpath.top) : (i+=1) xfree(context.tpath.key[i]);
     return context.root;
 }
 
-const TomlParser = struct {
-
+// const TomlParser = struct {
 
 
 fn parseFile(allocator: *Allocator, errbuf: []const u8) *Table {
-    var buf: []const u8 = 0;
-    var off: c_int = 0;
+    var buffer: [*]u8 = undefined;
+    var offset: u32 = 0;
 
     // prime the buf[] 
-    bufsz = 1000;
-    if (! (buf = MALLOC(bufsz + 1))) {
-        //snprc_intf(errbuf, errbufsz, "out of memory");
-        return error.OutOfMemory;
-    }
+    var buffer_size = 1000;
+    var buffer = try allocator.alloc(u8, buffer_size)
+    catch |err| {
+        snprc_intf(errbuf, errbufsz, "out of memory");
+        return err;
+    };
 
     // read from fp c_into buf 
     while (! feof(fp)) {
@@ -1889,7 +1894,7 @@ fn parseFile(allocator: *Allocator, errbuf: []const u8) *Table {
         var n: c_int = fread(buf + off, 1, bufsz - off, fp);
         if (ferror(fp)) {
             snprc_intf(errbuf, errbufsz, "%s",
-                    errno ? strerror(errno) : "Error reading file");
+                    if (errno) strerror(errno) else "Error reading file");
             xfree(buf);
             return 0;
         }
@@ -1900,70 +1905,70 @@ fn parseFile(allocator: *Allocator, errbuf: []const u8) *Table {
     buf[off] = 0; // we accounted for this byte in the REALLOC() above. 
 
     // parse it, cleanup and finish 
-    *Table ret = parse(buf, errbuf, errbufsz);
+    var ret: *Table = parse(buf, errbuf, errbufsz);
     xfree(buf);
     return ret;
 }
 
 
-fn xfree_kval(*keyval p) void {
+fn xfree_kval(p: *KeyValue) void {
     if (!p) return;
-    xfree(p->key);
-    xfree(p->val);
+    xfree(p.key);
+    xfree(p.value);
     xfree(p);
 }
 
-static void xfree_tab(*Table p);
-
-fn xfree_arr(*Array p) void {
+fn xfree_arr(p: *Array) void {
     if (!p) return;
 
-    xfree(p->key);
-    switch (p->kind) {
-        case 'v':
-            for (c_int i = 0; i < p->nelem; i++) xfree(p->u.val[i]);
-            xfree(p->u.val);
+    xfree(p.key);
+    switch (p.kind) {
+        'v' => {
+            var i = 0;
+            while (i < p.len) : (i+=1) xfree(p.u.value[i]);
+            xfree(p.u.val);
+            break;
+        },
+
+        'a' => {
+            while (i < p.len) : (i+=1) xfree(p.u.array[i]);
+            xfree(p.u.arr);
             break;
 
-        case 'a':
-            for (c_int i = 0; i < p->nelem; i++) xfree_arr(p->u.arr[i]);
-            xfree(p->u.arr);
+        },
+        't' => {
+            while (i < p.len) : (i+=1) xfree(p.u.table[i]);
+            xfree(p.u.tab);
             break;
-
-        case 't':
-            for (c_int i = 0; i < p->nelem; i++) xfree_tab(p->u.tab[i]);
-            xfree(p->u.tab);
-            break;
+        }
     }
 
     xfree(p);
 }
 
 
-fn xfree_tab(*Table p) void {
+fn xfree_tab(p: *Table) void {
     var i: c_int = undefined;
 
     if (!p) return;
 
-    xfree(p->key);
+    xfree(p.key);
 
-    for (i = 0; i < p->nkval; i++) xfree_kval(p->kval[i]);
-    xfree(p->kval);
+    while (i < p.nkval) : (i+=1) xfree(p.u.kval[i]);
+    xfree(p.kval);
 
-    for (i = 0; i < p->narr; i++) xfree_arr(p->arr[i]);
-    xfree(p->arr);
+    while (i < p.narr) : (i+=1) xfree(p.u.karr[i]);
+    xfree(p.arr);
 
-    for (i = 0; i < p->ntab; i++) xfree_tab(p->tab[i]);
-    xfree(p->tab);
+    while (i < p.ntab) : (i+=1) xfree(p.u.ktab[i]);
+    xfree(p.tab);
 
     xfree(p);
 }
 
-
 fn toml_free(table: *Table) void {
     xfree_tab(table);
 }
-
 
 fn ret_token(context: *Context, token: TokenType, lineNum: u32, slice: []const u8, len: u32) TokenType {
     var t = Token {
@@ -1972,7 +1977,7 @@ fn ret_token(context: *Context, token: TokenType, lineNum: u32, slice: []const u
         .slice = slice,
         .len = len,
         .eof = 0,
-    }
+    };
     context.token.n = t;
     return t;
 }
@@ -1995,7 +2000,8 @@ fn scan_string(context: *Context, p: []const u8, lineNum: u32, dot_is_special: b
         var hexreq: c_int = 0;         // #hex required 
         var escape: c_int = 0;
         var qcnt: c_int = 0;           // count quote 
-        for (p += 3; *p and qcnt < 3; p++) {
+        p += 3;
+        while (*p and qcnt < 3) : (p+=1) {
             if (escape) {
                 escape = 0;
                 if (strchr("btnfr\"\\", *p)) continue;
@@ -2006,13 +2012,13 @@ fn scan_string(context: *Context, p: []const u8, lineNum: u32, dot_is_special: b
                 return error.SyntaxError;
             }
             if (hexreq) {
-                hexreq--;
+                hexreq-=1;
                 if (strchr("0123456789ABCDEF", *p)) continue;
                 e_syntax_error(context, lineNum, "expect hex char");
                 return error.SyntaxError;
             }
             if (*p == '\\') { escape = 1; continue; }
-            qcnt = (*p == '"') ? qcnt + 1 : 0; 
+            qcnt = if (*p == '"') qcnt + 1 else 0; 
         }
         if (qcnt != 3) {
             e_syntax_error(context, lineNum, "unterminated triple-quote");
@@ -2023,7 +2029,8 @@ fn scan_string(context: *Context, p: []const u8, lineNum: u32, dot_is_special: b
     }
 
     if ('\'' == *p) {
-        for (p++; *p and *p != '\n' and *p != '\''; p++);
+        p += 1;
+        while (*p and *p != '\n' and *p != '\'') {p+=1;}
         if (*p != '\'') {
             e_syntax_error(context, lineNum, "unterminated s-quote");
             return 0;           // not reached 
