@@ -69,7 +69,7 @@ pub const Table = struct {
     // tables in the table
     tables: std.ArrayList(Table),
 
-    pub fn init(allocator: *std.mem.Allocator, key: []const u8, implicit: bool) Table {
+    fn init(allocator: *std.mem.Allocator, key: []const u8, implicit: bool) Table {
         return Table{
             .key = key,
             .implicit = implicit,
@@ -79,10 +79,10 @@ pub const Table = struct {
         };
     }
 
-    fn deinit() void {
-        pairs.deinit();
-        arrays.deinit();
-        tables.deinit();
+    fn deinit(self: *Table) void {
+        self.pairs.deinit();
+        self.arrays.deinit();
+        self.tables.deinit();
     }
 };
 
@@ -460,6 +460,7 @@ test "check key" {
     const allocator = std.debug.global_allocator;
 
     var t = Table.init(allocator, "key", false);
+    defer t.deinit();
     var p = KeyValue{ .key = "a", .value = "v" };
     try t.pairs.append(p);
 
@@ -1743,7 +1744,8 @@ fn parse_select(context: *Context) void {
     }
 }
 
-fn parse(conf: []const u8, errbuf: []const u8, errbufsz: c_int) *Table {
+// const TomlParser = struct {
+fn parse(conf: []const u8, errbuf: []u8) *Table {
     var context: *Context = undefined;
 
     // clear errbuf
@@ -1819,50 +1821,58 @@ fn parse(conf: []const u8, errbuf: []const u8, errbufsz: c_int) *Table {
     return context.root;
 }
 
-// const TomlParser = struct {
+test "parse" {
+    const allocator = std.debug.global_allocator;
 
-fn parseFile(allocator: *Allocator, errbuf: []const u8) *Table {
-    var buffer: [*]u8 = undefined;
-    var offset: u32 = 0;
+    var toml = "name = \"value\"";
+    var err: [100]u8 = undefined;
+    var result = try parse(toml, err[0..99]);
 
-    // prime the buf[]
-    var buffer_size = 1000;
-    var buffer = try allocator.alloc(u8, buffer_size) catch |err| {
-        snprc_intf(errbuf, errbufsz, "out of memory");
-        return err;
-    };
-
-    // read from fp c_into buf
-    while (!feof(fp)) {
-        bufsz += 1000;
-
-        // Allocate 1 extra byte because we will tag on a NUL
-        char * x = REALLOC(buf, bufsz + 1);
-        if (!x) {
-            // snprc_intf(errbuf, errbufsz, "out of memory");
-            xfree(buf);
-            return error.OutOfMemory;
-        }
-        buf = x;
-
-        errno = 0;
-        var n: c_int = fread(buf + off, 1, bufsz - off, fp);
-        if (ferror(fp)) {
-            snprc_intf(errbuf, errbufsz, "%s", if (errno) strerror(errno) else "Error reading file");
-            xfree(buf);
-            return 0;
-        }
-        off += n;
-    }
-
-    // tag on a NUL to cap the string
-    buf[off] = 0; // we accounted for this byte in the REALLOC() above.
-
-    // parse it, cleanup and finish
-    var ret: *Table = parse(buf, errbuf, errbufsz);
-    xfree(buf);
-    return ret;
+    std.testing.expect(std.mem.eql(u8, result.key, "name"));
 }
+
+// fn parseFile(allocator: *Allocator, errbuf: [*]u8) *Table {
+//     var buffer: [*]u8 = undefined;
+//     var offset: u32 = 0;
+//
+//     // prime the buf[]
+//     var buffer_size = 1000;
+//     var buffer = try allocator.alloc(u8, buffer_size) catch |err| {
+//         snprc_intf(errbuf, errbufsz, "out of memory");
+//         return err;
+//     };
+//
+//     // read from fp c_into buf
+//     while (!feof(fp)) {
+//         bufsz += 1000;
+//
+//         // Allocate 1 extra byte because we will tag on a NUL
+//         char * x = REALLOC(buf, bufsz + 1);
+//         if (!x) {
+//             // snprc_intf(errbuf, errbufsz, "out of memory");
+//             xfree(buf);
+//             return error.OutOfMemory;
+//         }
+//         buf = x;
+//
+//         errno = 0;
+//         var n: c_int = fread(buf + off, 1, bufsz - off, fp);
+//         if (ferror(fp)) {
+//             snprc_intf(errbuf, errbufsz, "%s", if (errno) strerror(errno) else "Error reading file");
+//             xfree(buf);
+//             return 0;
+//         }
+//         off += n;
+//     }
+//
+//     // tag on a NUL to cap the string
+//     buf[off] = 0; // we accounted for this byte in the REALLOC() above.
+//
+//     // parse it, cleanup and finish
+//     var ret: *Table = parse(buf, errbuf, errbufsz);
+//     xfree(buf);
+//     return ret;
+// }
 
 fn xfree_kval(p: *KeyValue) void {
     if (!p) return;
