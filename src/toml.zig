@@ -69,10 +69,14 @@ pub const Table = struct {
     // tables in the table
     tables: std.ArrayList(Table),
 
-    fn init(allocator: *Allocator) !void {
-        pairs.init(allocator);
-        arrays.init(allocator);
-        tables.init(allocator);
+    pub fn init(allocator: *std.mem.Allocator, key: []const u8, implicit: bool) Table {
+        return Table{
+            .key = key,
+            .implicit = implicit,
+            .pairs = std.ArrayList(KeyValue).init(allocator),
+            .arrays = std.ArrayList(Array).init(allocator),
+            .tables = std.ArrayList(Table).init(allocator),
+        };
     }
 
     fn deinit() void {
@@ -430,38 +434,36 @@ test "Decimal" {
 
 /// Look up key in table. Returns `NotFound` if not present,
 /// or the element
-fn check_key(table: *Table, key: []const u8) !TomlType {
-    for (table.pairs) |*pair| {
+fn checkKey(table: *Table, key: []const u8) !TomlType {
+    for (table.pairs.toSlice()) |*pair| {
         if (std.mem.eql(u8, key, pair.key)) {
             return TomlType{ .pair = pair };
         }
     }
 
-    for (table.arrays) |array, i| {
+    for (table.arrays.toSlice()) |*array| {
         if (std.mem.eql(u8, key, array.key)) {
-            return TomlType{ .array = &table.arrays[i] };
+            return TomlType{ .array = array };
         }
     }
 
-    for (table.tables) |tab, i| {
+    for (table.tables.toSlice()) |*tab| {
         if (std.mem.eql(u8, key, tab.key)) {
-            return TomlType{ .table = &table.tables[i] };
+            return TomlType{ .table = tab };
         }
     }
 
     return error.NotFound;
 }
 
-test "check_key" {
-    var pairs = [_]KeyValue{.{ .key = "a", .value = "v" }};
-    var t = Table{
-        .key = "key",
-        .implicit = false,
-        .pairs = pairs[0..pairs.len],
-        .arrays = undefined,
-        .tables = undefined,
-    };
-    var result = try check_key(&t, "a");
+test "check key" {
+    const allocator = std.debug.global_allocator;
+
+    var t = Table.init(allocator, "key", false);
+    var p = KeyValue{ .key = "a", .value = "v" };
+    try t.pairs.append(p);
+
+    var result = try checkKey(&t, "a");
     switch (result) {
         TomlType.pair => |pair| std.testing.expect(std.mem.eql(u8, pair.value, "v")),
         else => unreachable,
@@ -1242,7 +1244,7 @@ fn normalizeKey(context: *Context, strtok: Token) []const u8 {
 }
 
 fn key_kind(tab: *Table, key: []const u8) c_int {
-    return check_key(tab, key, 0, 0, 0);
+    return checkKey(tab, key, 0, 0, 0);
 }
 
 /// Create an array in an array
@@ -1586,7 +1588,7 @@ fn walk_tabpath(context: *Context) void {
         var nextarr: *Array = 0;
         var nexttab: *Table = 0;
 
-        switch (check_key(curtab, key, &nextval, &nextarr, &nexttab)) {
+        switch (checkKey(curtab, key, &nextval, &nextarr, &nexttab)) {
             't' => {
                 // found a table. nexttab is where we will go next.
                 break;
